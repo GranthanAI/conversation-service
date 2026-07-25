@@ -1,0 +1,27 @@
+[project]
+name = "conversation-service"
+version = "0.1.0"
+description = "GraphGPT Conversation Service"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "cassandra-driver",
+    "redis",
+    "aiokafka",
+    "grpcio",
+    "grpcio-tools",
+    "pydantic",
+    "pydantic-settings",
+    "structlog",
+    "pyjwt",
+    "cryptography"
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "testcontainers[kafka,redis]"
+]
