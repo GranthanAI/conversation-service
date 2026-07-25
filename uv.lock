@@ -305,7 +305,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiokafka" },
-    { name = "cassandra-driver" },
+    { name = "cassandra-driver", specifier = ">=3.29.2" },
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "grpcio" },

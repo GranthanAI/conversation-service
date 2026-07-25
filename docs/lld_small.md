@@ -73,162 +73,57 @@ The Conversation Service is the single source of truth for conversation and mess
 
 # 3. Codebase & Module Structure
 
-The directory layout enforces a streamlined architectural layout, segregating components directly under the root package:
+The service is a single deployable FastAPI application internally organized into clearly separated packages so that business logic (`core/`), infrastructure adapters (`repositories/`, `events/`, `grpc_client/`), and the HTTP/SSE surface (`api/`) never leak into one another. This mirrors a **Hexagonal / Ports-and-Adapters** style: `core/` defines the ports (interfaces); `repositories/`, `events/`, and `grpc_client/` provide the adapters.
 
-```text
-conversation-service/
-├── main.py                         # FastAPI entrypoint
-├── lifespan.py                     # Startup & shutdown
-├── api/                            # Presentation Layer
-│   ├── deps.py
-│   ├── routers/
-│   │   ├── conversations.py
-│   │   ├── messages.py
-│   │   ├── stream.py
-│   │   └── health.py
-│   └── middleware/
-│       ├── auth.py
-│       ├── rate_limit.py
-│       ├── correlation.py
-│       ├── logging.py
-│       └── exception_handler.py
-├── core/                           # Configuration
-│   ├── config.py
-│   ├── constants.py
-│   ├── enums.py
-│   └── security.py
-├── domain/                         # Pure Business Domain
-│   ├── entities/
-│   │   ├── conversation.py
-│   │   ├── message.py
-│   │   ├── outbox_event.py
-│   │   └── inbox_event.py
-│   ├── repositories/
-│   │   ├── conversation.py
-│   │   ├── message.py
-│   │   ├── outbox.py
-│   │   └── inbox.py
-│   ├── events/
-│   │   ├── chat_message_created.py
-│   │   ├── chat_response_completed.py
-│   │   ├── conversation_created.py
-│   │   └── conversation_deleted.py
-│   └── exceptions.py
-├── schemas/                        # DTOs
-│   ├── requests/
-│   │   ├── conversation.py
-│   │   ├── message.py
-│   │   └── stream.py
-│   ├── responses/
-│   │   ├── conversation.py
-│   │   ├── message.py
-│   │   └── pagination.py
-│   └── events.py
-├── services/                       # Business Logic
-│   ├── conversation_service.py
-│   ├── message_service.py
-│   ├── stream_service.py
-│   ├── authorization_service.py
-│   ├── cache_service.py
-│   ├── idempotency_service.py
-│   └── summary_service.py
-├── infrastructure/
-│   ├── cassandra/
-│   │   ├── client.py
-│   │   ├── models.py
-│   │   ├── conversation_repository.py
-│   │   ├── message_repository.py
-│   │   ├── outbox_repository.py
-│   │   ├── inbox_repository.py
-│   │   └── schema.cql
-│   ├── redis/
-│   │   ├── client.py
-│   │   ├── conversation_cache.py
-│   │   ├── message_cache.py
-│   │   ├── rate_limiter.py
-│   │   └── idempotency.py
-│   ├── kafka/
-│   │   ├── producer.py
-│   │   ├── consumer.py
-│   │   ├── topics.py
-│   │   └── serializers.py
-│   ├── grpc/
-│   │   ├── client.py
-│   │   ├── stream_handler.py
-│   │   ├── protobuf/
-│   │   └── interceptors.py
-│   └── telemetry/
-│       ├── metrics.py
-│       ├── tracing.py
-│       └── logging.py
-├── streaming/
-│   ├── sse_manager.py
-│   ├── connection_registry.py
-│   ├── heartbeat.py
-│   └── events.py
-├── workers/
-│   ├── outbox_worker.py
-│   ├── retry_worker.py
-│   ├── cleanup_worker.py
-│   ├── summary_worker.py
-│   └── title_worker.py
-├── dependencies/
-│   ├── database.py
-│   ├── repositories.py
-│   ├── services.py
-│   ├── cache.py
-│   └── messaging.py
-├── utils/
-│   ├── helpers.py
-│   ├── datetime.py
-│   ├── pagination.py
-│   ├── serialization.py
-│   └── validators.py
-├── tests/
-│   ├── unit/
-│   │   ├── services/
-│   │   ├── repositories/
-│   │   ├── middleware/
-│   │   └── workers/
-│   ├── integration/
-│   │   ├── cassandra/
-│   │   ├── redis/
-│   │   ├── kafka/
-│   │   ├── grpc/
-│   │   └── api/
-│   └── load/
-├── docker/
-│   ├── Dockerfile
-│   ├── docker-compose.yml
-│   └── entrypoint.sh
-├── scripts/
-│   ├── migrate.py
-│   ├── create_topics.py
-│   └── seed.py
-├── requirements.txt
-├── pyproject.toml
-├── README.md
-└── .env
+```mermaid
+flowchart TD
+    ROOT["📦 conversation_service/"]:::root
+    ROOT --> R1["api/"]:::pkg
+    ROOT --> R2["core/"]:::pkg
+    ROOT --> R3["repositories/"]:::pkg
+    ROOT --> R4["events/"]:::pkg
+    subgraph L2[" "]
+    direction LR
+    R1 --- A1["controllers,<br/>schemas,<br/>middleware"]:::leaf
+    R2 --- A2["ConversationManager,<br/>MessageManager,<br/>SSEManager"]:::leaf
+    R3 --- A3["CassandraRepository,<br/>RedisCacheManager"]:::leaf
+    R4 --- A4["OutboxPublisher,<br/>KafkaProducer/Consumer"]:::leaf
+    end
+    ROOT --> R5["grpc_client/"]:::pkg
+    ROOT --> R6["workers/"]:::pkg
+    ROOT --> R7["config/"]:::pkg
+    ROOT --> R8["tests/"]:::pkg
+    subgraph L3[" "]
+    direction LR
+    R5 --- A5["GRPCStreamingClient,<br/>generated stubs"]:::leaf
+    R6 --- A6["OutboxWorker,<br/>CacheCleanupWorker"]:::leaf
+    R7 --- A7["settings,<br/>env loader"]:::leaf
+    R8 --- A8["unit, integration,<br/>load"]:::leaf
+    end
+
+    classDef root fill:#2563EB,stroke:#1E3A8A,stroke-width:2px,color:#ffffff,font-weight:bold;
+    classDef pkg fill:#7C3AED,stroke:#4C1D95,stroke-width:2px,color:#ffffff,font-weight:bold;
+    classDef leaf fill:#EDE9FE,stroke:#7C3AED,stroke-width:1px,color:#4C1D95;
+    style L2 fill:transparent,stroke:transparent
+    style L3 fill:transparent,stroke:transparent
 ```
 
 ### 3.1 Package Responsibilities
 
-| Directory | Layer / Component | Rationale & Responsibility |
+| Package | Contains | Depends On |
 |---|---|---|
-| `api/` | Presentation Layer | Hosts FastAPI endpoints (`routers/`) and `middleware/` definitions. |
-| `core/` | Configurations | Pure application configurations, security schemas, settings models, and enums. |
-| `domain/` | Pure Business Domain | Defines entities, abstract repository interfaces, exceptions, and events. |
-| `schemas/` | DTO Layer | Contains requests, responses, and events serialization schemas (Pydantic models). |
-| `services/` | Business Logic | Holds core use case implementations (Conversation, Message, Streaming logic). |
-| `infrastructure/` | Infrastructure Adapters | Implements direct client adapters for Cassandra, Redis, Kafka, gRPC, and telemetry. |
-| `streaming/` | SSE Streaming | Concrete server-sent events connection management, registry, and heartbeat loop. |
-| `workers/` | Background Workers | Outbox, retry, cleanup, title, and summary background workers. |
-| `dependencies/` | FastAPI Providers | Central injection providers for database sessions, repos, caches, and services. |
-| `utils/` | Shared Utilities | Cross-cutting utility scripts (serialization, helpers, validation, datetime helpers). |
+| `api/` | FastAPI routers (ConversationController, MessageController, StreamController), Pydantic request/response schemas, auth middleware | `core/` |
+| `core/` | ConversationManager, MessageManager, SSEManager — pure business logic, no direct DB/Kafka imports | `repositories/`, `events/`, `grpc_client/` (via interfaces) |
+| `repositories/` | CassandraRepository, RedisCacheManager — the only files allowed to import the Cassandra/Redis drivers | external drivers only |
+| `events/` | OutboxPublisher, KafkaProducerAdapter, KafkaConsumerAdapter | `repositories/` (outbox table), external Kafka client |
+| `grpc_client/` | GRPCStreamingClient and generated protobuf stubs | external gRPC channel to LLM Service |
+| `workers/` | OutboxWorker (background poll loop), CacheCleanupWorker | `events/`, `repositories/` |
+| `config/` | Pydantic Settings class, environment variable loading, secrets resolution | none (leaf package) |
+| `tests/` | Unit tests per package, integration tests against test-containers, load-test scripts (Locust/k6) | all packages (test-only) |
 
 ### 3.2 Dependency Rule
 
-> **Business Domain (`domain/`) and Logic (`services/`) never depend on Infrastructure (`infrastructure/`) directly.** All dependencies are inverted using the interfaces declared under `domain/repositories/` and injected via providers in `dependencies/`. This isolates core behaviors from databases or broker-specific libraries.
+> **`core/` never imports `repositories/`, `events/`, or `grpc_client/` directly — only their interfaces.** Concrete adapters are injected at startup via FastAPI's dependency-injection container. This keeps `ConversationManager` and `MessageManager` fully unit-testable with in-memory fakes.
 
 ---
 
