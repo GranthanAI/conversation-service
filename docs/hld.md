@@ -1036,3 +1036,130 @@ To manage a deployment at a scale of millions of active users, the Kubernetes in
 5. **SSE carries real-time browser updates**: The Conversation Service forwards tokens to the client over SSE using standard HTTP.
 
 This separation keeps the system scalable, minimizes unnecessary Kafka traffic, and provides a clean ownership model that's suitable for enterprise-scale AI applications.
+
+---
+
+## Codebase Structure & File Significance
+
+Below is the architectural mapping and significance of each file in the codebase directory tree:
+
+```text
+conversation-service/
+├── main.py                         # FastAPI Entrypoint: Configures global exception mapping and routing paths.
+├── lifespan.py                     # Life Cycle Hooks: Manages database connections setup (startup) and teardowns (shutdown).
+│
+├── api/                            # Presentation Layer
+│   ├── deps.py                     # Authentication dependency mapping (token extraction and user identity parsing).
+│   ├── routers/
+│   │   ├── conversations.py         # HTTP endpoints for creating, querying, renaming, and soft-deleting conversations.
+│   │   ├── messages.py              # HTTP endpoints for submitting user messages and retrieving chat history.
+│   │   ├── stream.py                # Server-Sent Events (SSE) stream endpoint to deliver generated tokens.
+│   │   └── health.py                # Service lifecycle status health check endpoints.
+│   └── middleware/
+│       ├── auth.py                  # JWT Signature authorization verify middleware.
+│       ├── rate_limit.py            # Redis Lua script sliding-window rate limit checks.
+│       ├── correlation.py           # Propagates correlation/trace IDs across incoming/outgoing boundaries.
+│       ├── logging.py               # Structlog structured logs formatter.
+│       └── exception_handler.py     # Maps internal domain errors to standardized API error models.
+│
+├── core/                           # System Configuration & Enums
+│   ├── config.py                   # Pydantic Settings: Parses environment parameters and secret keys.
+│   ├── constants.py                # System-wide static limits and connection configurations.
+│   ├── enums.py                    # Domain state codes (ConversationStatus, MessageStatus, EventType).
+│   └── security.py                 # Encryption/decryption token utility helpers.
+│
+├── domain/                         # Core Business Domain (Database Agnostic)
+│   ├── entities/
+│   │   ├── conversation.py          # Plain domain model dataclass representing a Conversation.
+│   │   ├── message.py               # Plain domain model dataclass representing a Message.
+│   │   ├── outbox_event.py          # Domain representation of transactional outbox records.
+│   │   └── inbox_event.py           # Domain representation of deduplication inbox logs.
+│   ├── repositories/
+│   │   ├── conversation.py          # Port interface (IConversationRepository) for conversation data stores.
+│   │   ├── message.py               # Port interface (IMessageRepository) for message history.
+│   │   ├── outbox.py                # Port interface (IOutboxRepository) for transaction outbox logs.
+│   │   └── inbox.py                 # Port interface (IInboxRepository) for event deduplication.
+│   ├── events/
+│   │   ├── chat_message_created.py  # Definition schema for message creation event types.
+│   │   ├── chat_response_completed.py # Definition schema for assistant completion event types.
+│   │   ├── conversation_created.py  # Definition schema for new conversation catalogs.
+│   │   └── conversation_deleted.py  # Definition schema for soft deleted catalogs.
+│   └── exceptions.py                # Custom taxonomy domain exceptions (NotFoundError, OwnershipError).
+│
+├── schemas/                        # DTO Layer (Pydantic Serialization Models)
+│   ├── requests/
+│   │   ├── conversation.py          # Validator schemas for conversation creation and rename inputs.
+│   │   ├── message.py               # Validator schemas for user message body submissions.
+│   │   └── stream.py                # Validator schemas for starting token stream sessions.
+│   ├── responses/
+│   │   ├── conversation.py          # Payload formatter responses for conversation objects.
+│   │   ├── message.py               # Payload formatter responses for message history objects.
+│   │   └── pagination.py            # Generic envelope formatter for pagination cursors.
+│   └── events.py                    # Serializers for encoding events pushed to Kafka topics.
+│
+├── services/                       # Business Logic Orchestration Layer
+│   ├── conversation_service.py      # Conversation CRUD orchestrator: validates permissions and invalidates cache entries.
+│   ├── message_service.py           # Message submission orchestrator: persists metadata and writes outbox event logs.
+│   ├── stream_service.py            # Orchestrator client coordinating gRPC streams to SSE connection channels.
+│   ├── authorization_service.py     # Checks resource access rules (User-to-Conversation ownership).
+│   ├── cache_service.py             # Handles cache invalidations and catalog refreshes.
+│   ├── idempotency_service.py       # Resolves request key parameters to deduplicate API calls.
+│   └── summary_service.py           # Triggers title/summary creations on new message exchanges.
+│
+├── infrastructure/                 # Infrastructure Adapters (Port Implementations)
+│   ├── cassandra/
+│   │   ├── client.py                # Connection driver builder for Apache Cassandra sessions.
+│   │   ├── models.py                # Cassandra-specific database schemas mappings.
+│   │   ├── conversation_repository.py # Cassandra adapter implementation for IConversationRepository.
+│   │   ├── message_repository.py    # Cassandra adapter implementation for IMessageRepository.
+│   │   ├── outbox_repository.py     # Cassandra adapter implementation for IOutboxRepository.
+│   │   ├── inbox_repository.py      # Cassandra adapter implementation for IInboxRepository.
+│   │   └── schema.cql               # DDL configuration script for Cassandra keyspaces and tables.
+│   ├── redis/
+│   │   ├── client.py                # Connection driver builder for Redis Cluster client pools.
+│   │   ├── conversation_cache.py    # Redis cache adapter for conversation catalogs.
+│   │   ├── message_cache.py         # Redis cache adapter for caching last50 message history.
+│   │   ├── rate_limiter.py          # Redis Lua sliding window rate limits engine.
+│   │   └── idempotency.py           # Redis setnx-based request lock managers.
+│   ├── kafka/
+│   │   ├── producer.py              # Kafka event publication client.
+│   │   ├── consumer.py              # Kafka consumer loop to read summary and complete event streams.
+│   │   ├── topics.py                # Definitions of system Kafka topics.
+│   │   └── serializers.py           # Custom serializers for Kafka message payloads.
+│   ├── grpc/
+│   │   ├── client.py                # Client client connecting to LLM Service gRPC channels.
+│   │   ├── stream_handler.py        # Handles gRPC server streaming chunk streams.
+│   │   └── protobuf/                # Compiled protobuf compiler output files.
+│   └── telemetry/
+│       ├── metrics.py               # Exposes Prometheus performance gauges.
+│       ├── tracing.py               # Builds OpenTelemetry custom child span handlers.
+│       └── logging.py               # Configures JSON structured logging formatters.
+│
+├── streaming/                      # Browser Real-Time Token Delivery (SSE)
+│   ├── sse_manager.py               # Handles SSE connections lifecycle (flushing events and closing socket handles).
+│   ├── connection_registry.py       # Local registry database tracking active in-memory browser connections.
+│   ├── heartbeat.py                 # Periodic ping heartbeat thread loop to maintain browser connections.
+│   └── events.py                    # Formats SSE chunk message templates.
+│
+├── workers/                        # Background Task Daemons
+│   ├── outbox_worker.py             # Transactional Outbox Daemon: polls Cassandra outbox and publishes events to Kafka.
+│   ├── retry_worker.py              # Retry processor worker handling failed outbox events or DLQ loops.
+│   ├── cleanup_worker.py            # Evicts expired cache mappings and soft-deleted records.
+│   ├── summary_worker.py            # Triggers text summarizations on conversation history changes.
+│   └── title_worker.py              # Generates contextual conversation titles based on early exchanges.
+│
+├── dependencies/                   # FastAPI Dependency Injection (DI) Providers
+│   ├── database.py                  # Instantiates database client singletons.
+│   ├── repositories.py              # Resolves concrete implementations for Repository interfaces.
+│   ├── services.py                  # Resolves concrete orchestrators for logic layer Services.
+│   ├── cache.py                     # Resolves Redis client cache adapters.
+│   └── messaging.py                 # Resolves Kafka consumer/producer and outbox adapters.
+│
+└── utils/                          # Cross-Cutting Shared Utilities
+    ├── helpers.py                   # Generic scripting and format helper methods.
+    ├── datetime.py                  # ISO string formatting and timezone utility scripts.
+    ├── pagination.py                # Cursor mapping pagination calculation helpers.
+    ├── serialization.py             # Custom JSON serialization utilities.
+    └── validators.py                # Generic validation helpers.
+```
+
