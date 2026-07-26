@@ -1,0 +1,12 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+cassandra-driver>=3.29.2
+redis>=5.0.0
+aiokafka>=0.10.0
+grpcio>=1.62.0
+grpcio-tools>=1.62.0
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+structlog>=24.1.0
+pyjwt>=2.8.0
+cryptography>=42.0.0
