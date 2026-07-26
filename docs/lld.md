@@ -73,162 +73,114 @@ The Conversation Service is the single source of truth for conversation and mess
 
 # 3. Codebase & Module Structure
 
-The directory layout enforces a streamlined architectural layout, segregating components directly under the root package:
+The directory layout enforces a streamlined architectural layout, segregating components directly under the `app/` package:
 
 ```text
 conversation-service/
-├── main.py                         # FastAPI entrypoint
-├── lifespan.py                     # Startup & shutdown
-├── api/                            # Presentation Layer
-│   ├── deps.py
-│   ├── routers/
-│   │   ├── conversations.py
-│   │   ├── messages.py
-│   │   ├── stream.py
-│   │   └── health.py
-│   └── middleware/
-│       ├── auth.py
-│       ├── rate_limit.py
-│       ├── correlation.py
-│       ├── logging.py
-│       └── exception_handler.py
-├── core/                           # Configuration
-│   ├── config.py
-│   ├── constants.py
-│   ├── enums.py
-│   └── security.py
-├── domain/                         # Pure Business Domain
-│   ├── entities/
-│   │   ├── conversation.py
-│   │   ├── message.py
-│   │   ├── outbox_event.py
-│   │   └── inbox_event.py
-│   ├── repositories/
+├── app/
+│   ├── api/
+│   │   ├── deps.py
+│   │   ├── router.py
+│   │   └── v1/
+│   │       ├── conversations.py
+│   │       ├── messages.py
+│   │       ├── stream.py
+│   │       └── health.py
+│   ├── core/
+│   │   ├── config.py
+│   │   ├── security.py
+│   │   ├── logging.py
+│   │   └── constants.py
+│   ├── db/
+│   │   ├── cassandra.py
+│   │   ├── redis.py
+│   │   ├── kafka.py
+│   │   └── grpc.py
+│   ├── models/
 │   │   ├── conversation.py
 │   │   ├── message.py
 │   │   ├── outbox.py
 │   │   └── inbox.py
-│   ├── events/
-│   │   ├── chat_message_created.py
-│   │   ├── chat_response_completed.py
-│   │   ├── conversation_created.py
-│   │   └── conversation_deleted.py
-│   └── exceptions.py
-├── schemas/                        # DTOs
-│   ├── requests/
+│   ├── schemas/
 │   │   ├── conversation.py
 │   │   ├── message.py
-│   │   └── stream.py
-│   ├── responses/
-│   │   ├── conversation.py
-│   │   ├── message.py
-│   │   └── pagination.py
-│   └── events.py
-├── services/                       # Business Logic
-│   ├── conversation_service.py
-│   ├── message_service.py
-│   ├── stream_service.py
-│   ├── authorization_service.py
-│   ├── cache_service.py
-│   ├── idempotency_service.py
-│   └── summary_service.py
-├── infrastructure/
-│   ├── cassandra/
-│   │   ├── client.py
-│   │   ├── models.py
+│   │   ├── common.py
+│   │   └── event.py
+│   ├── repositories/
 │   │   ├── conversation_repository.py
 │   │   ├── message_repository.py
 │   │   ├── outbox_repository.py
-│   │   ├── inbox_repository.py
-│   │   └── schema.cql
-│   ├── redis/
-│   │   ├── client.py
-│   │   ├── conversation_cache.py
-│   │   ├── message_cache.py
-│   │   ├── rate_limiter.py
-│   │   └── idempotency.py
-│   ├── kafka/
-│   │   ├── producer.py
-│   │   ├── consumer.py
-│   │   ├── topics.py
-│   │   └── serializers.py
-│   ├── grpc/
-│   │   ├── client.py
-│   │   ├── stream_handler.py
-│   │   ├── protobuf/
-│   │   └── interceptors.py
-│   └── telemetry/
-│       ├── metrics.py
-│       ├── tracing.py
-│       └── logging.py
-├── streaming/
-│   ├── sse_manager.py
-│   ├── connection_registry.py
-│   ├── heartbeat.py
-│   └── events.py
-├── workers/
-│   ├── outbox_worker.py
-│   ├── retry_worker.py
-│   ├── cleanup_worker.py
-│   ├── summary_worker.py
-│   └── title_worker.py
-├── dependencies/
-│   ├── database.py
-│   ├── repositories.py
-│   ├── services.py
-│   ├── cache.py
-│   └── messaging.py
-├── utils/
-│   ├── helpers.py
-│   ├── datetime.py
-│   ├── pagination.py
-│   ├── serialization.py
-│   └── validators.py
+│   │   └── inbox_repository.py
+│   ├── services/
+│   │   ├── conversation_service.py
+│   │   ├── message_service.py
+│   │   ├── stream_service.py
+│   │   ├── cache_service.py
+│   │   ├── authorization_service.py
+│   │   └── idempotency_service.py
+│   ├── clients/
+│   │   ├── redis_client.py
+│   │   ├── kafka_producer.py
+│   │   ├── kafka_consumer.py
+│   │   ├── grpc_client.py
+│   │   └── sse_manager.py
+│   ├── workers/
+│   │   ├── outbox_worker.py
+│   │   ├── retry_worker.py
+│   │   ├── cleanup_worker.py
+│   │   └── summary_worker.py
+│   ├── middleware/
+│   │   ├── auth.py
+│   │   ├── rate_limit.py
+│   │   ├── correlation.py
+│   │   └── exception_handler.py
+│   ├── events/
+│   │   ├── producers.py
+│   │   ├── consumers.py
+│   │   └── topics.py
+│   ├── utils/
+│   │   ├── pagination.py
+│   │   ├── serialization.py
+│   │   ├── validators.py
+│   │   └── helpers.py
+│   ├── telemetry/
+│   │   ├── metrics.py
+│   │   └── tracing.py
+│   └── main.py
 ├── tests/
 │   ├── unit/
-│   │   ├── services/
-│   │   ├── repositories/
-│   │   ├── middleware/
-│   │   └── workers/
 │   ├── integration/
-│   │   ├── cassandra/
-│   │   ├── redis/
-│   │   ├── kafka/
-│   │   ├── grpc/
-│   │   └── api/
 │   └── load/
-├── docker/
-│   ├── Dockerfile
-│   ├── docker-compose.yml
-│   └── entrypoint.sh
 ├── scripts/
-│   ├── migrate.py
-│   ├── create_topics.py
-│   └── seed.py
-├── requirements.txt
+├── Dockerfile
+├── docker-compose.yml
 ├── pyproject.toml
-├── README.md
-└── .env
+├── requirements.txt
+└── README.md
 ```
 
 ### 3.1 Package Responsibilities
 
 | Directory | Layer / Component | Rationale & Responsibility |
 |---|---|---|
-| `api/` | Presentation Layer | Hosts FastAPI endpoints (`routers/`) and `middleware/` definitions. |
-| `core/` | Configurations | Pure application configurations, security schemas, settings models, and enums. |
-| `domain/` | Pure Business Domain | Defines entities, abstract repository interfaces, exceptions, and events. |
-| `schemas/` | DTO Layer | Contains requests, responses, and events serialization schemas (Pydantic models). |
-| `services/` | Business Logic | Holds core use case implementations (Conversation, Message, Streaming logic). |
-| `infrastructure/` | Infrastructure Adapters | Implements direct client adapters for Cassandra, Redis, Kafka, gRPC, and telemetry. |
-| `streaming/` | SSE Streaming | Concrete server-sent events connection management, registry, and heartbeat loop. |
-| `workers/` | Background Workers | Outbox, retry, cleanup, title, and summary background workers. |
-| `dependencies/` | FastAPI Providers | Central injection providers for database sessions, repos, caches, and services. |
-| `utils/` | Shared Utilities | Cross-cutting utility scripts (serialization, helpers, validation, datetime helpers). |
+| `app/api/` | Presentation Layer | Exposes HTTP endpoint path handlers (`v1/`), routers, and request dependencies (`deps.py`). |
+| `app/core/` | Configuration Layer | Centralizes config loader schemas (`config.py`), constants, telemetry loggers, and security modules. |
+| `app/db/` | Database Connections | Manages persistent client drivers initialization (Cassandra, Redis, Kafka, and gRPC). |
+| `app/models/` | Domain Entities | Pure Python dataclass structures representing Conversation, Message, Outbox, and Inbox records. |
+| `app/schemas/` | DTO Layer | Contains Pydantic validators mapping payload structures, request forms, and serializations. |
+| `app/repositories/` | Data Access Repositories | Concrete repository execution logic wrapping SQL statements and key operations. |
+| `app/services/` | Business Logic orchestrator | Orchestrates core business use cases (CRUD orchestration, token flow control). |
+| `app/clients/` | Client SDK Adapters | Concrete SDK wrapper utilities (gRPC stream reader, aiokafka producer/consumer client loops, SSE managers). |
+| `app/workers/` | Background Daemons | Transactional outbox polling threads, failed DLQ retries, and data purgers. |
+| `app/middleware/` | Interceptor Hooks | FastAPI request middleware filters (authentication verification, rate limits, correlation logs propagation). |
+| `app/events/` | Event Catalog | Maps message serialization types and Kafka topics configurations. |
+| `app/utils/` | Shared Helpers | generic formatting utilities (datetime logic, validators, serializers). |
+| `app/telemetry/` | Observability Layer | Custom Prometheus instrumentation targets and distributed OpenTelemetry tracers. |
+| `app/main.py` | App Entrypoint | FastAPI ASGI startup hooks registration. |
 
 ### 3.2 Dependency Rule
 
-> **Business Domain (`domain/`) and Logic (`services/`) never depend on Infrastructure (`infrastructure/`) directly.** All dependencies are inverted using the interfaces declared under `domain/repositories/` and injected via providers in `dependencies/`. This isolates core behaviors from databases or broker-specific libraries.
+> **Business Use-Cases (`services/`) and Domain (`models/`) are kept decoupled from database-specific driver models.** Concrete data access code is decoupled using repository adapters (`repositories/`) and injected at startup. This isolates core business operations from persistence library version changes.
 
 ---
 
