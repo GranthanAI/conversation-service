@@ -1,51 +1,58 @@
 """
-Conversation Schema DTOs.
-Validates HTTP request bodies and serializes conversation records.
+Conversation Pydantic Schemas.
+Request validation forms and serialization DTOs for Conversation endpoints.
 """
 
+from typing import List, Optional
 from datetime import datetime
 from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
-from app.models.conversation import ConversationStatus
 
 class CreateConversationRequest(BaseModel):
     """
-    Validates conversation creation input parameters.
+    Form model for conversation creation.
     """
-    title: str = Field(..., min_length=1, max_length=255, description="Initial conversation title")
+    title: str = Field(..., description="Initial title for conversation catalog", min_length=1, max_length=255)
 
     @field_validator("title")
-    @classmethod
-    def clean_title(cls, v: str) -> str:
-        cleaned = v.strip()
-        if not cleaned:
-            raise ValueError("title cannot be empty or whitespace only")
-        return cleaned
+
+    def validate_title(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("Conversation title cannot be empty or whitespace.")
+        return trimmed
 
 class RenameConversationRequest(BaseModel):
     """
-    Validates conversation rename input parameters.
+    Form model for renaming conversation.
     """
-    title: str = Field(..., min_length=1, max_length=255, description="New conversation title")
+    title: str = Field(..., description="New title for conversation catalog", min_length=1, max_length=255)
 
     @field_validator("title")
-    @classmethod
-    def clean_title(cls, v: str) -> str:
-        cleaned = v.strip()
-        if not cleaned:
-            raise ValueError("title cannot be empty or whitespace only")
-        return cleaned
+
+    def validate_title(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("Conversation title cannot be empty or whitespace.")
+        return trimmed
 
 class ConversationResponse(BaseModel):
     """
-    Serializes a single conversation details response record.
+    Serialized DTO for conversation entity responses.
     """
     conversation_id: UUID
     user_id: UUID
     title: str
     created_at: datetime
     updated_at: datetime
-    status: ConversationStatus
+    status: str
 
     class Config:
         from_attributes = True
+
+class ConversationListResponse(BaseModel):
+    """
+    Paginated response container for user conversation catalogs.
+    """
+    items: List[ConversationResponse]
+    next_cursor: Optional[datetime] = None

@@ -40,5 +40,7 @@ class Settings(BaseSettings):
     # JWT Configs
     JWT_SECRET_KEY: str = "supersecretjwtkeyforauthservicelocaldvelopment12345"
     JWT_ALGORITHM: str = "HS256"
+    JWT_ISSUER: Optional[str] = None
+    JWT_AUDIENCE: Optional[str] = None
 
 settings = Settings()

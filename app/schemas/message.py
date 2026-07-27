@@ -1,37 +1,44 @@
 """
-Message Schema DTOs.
-Validates HTTP request bodies and serializes message exchange logs.
+Message Pydantic Schemas.
+Request validation forms and response DTOs for Message endpoints.
 """
 
+from typing import List, Optional
 from datetime import datetime
 from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
-from app.models.message import MessageStatus
 
 class CreateMessageRequest(BaseModel):
     """
-    Validates message submission input parameters.
+    Form model for message creation.
     """
-    content: str = Field(..., min_length=1, max_length=8000, description="Text content of the message")
+    content: str = Field(..., description="Message text content", min_length=1, max_length=8000)
 
     @field_validator("content")
-    @classmethod
-    def clean_content(cls, v: str) -> str:
-        cleaned = v.strip()
-        if not cleaned:
-            raise ValueError("content cannot be empty or whitespace only")
-        return cleaned
+
+    def validate_content(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("Message content cannot be empty or whitespace.")
+        return trimmed
 
 class MessageResponse(BaseModel):
     """
-    Serializes a single message record.
+    Serialized DTO for message entity responses.
     """
-    conversation_id: UUID
     message_id: UUID
+    conversation_id: UUID
     sender: str
     content: str
     created_at: datetime
-    status: MessageStatus
+    status: str
 
     class Config:
         from_attributes = True
+
+class MessageListResponse(BaseModel):
+    """
+    Paginated response container for message history.
+    """
+    items: List[MessageResponse]
+    next_cursor: Optional[UUID] = None

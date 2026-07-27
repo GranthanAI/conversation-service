@@ -1,6 +1,6 @@
 """
 API Dependency Factory Methods.
-Provides Pydantic and repository resource injections for FastAPI controllers.
+Provides repository and service resource injections for FastAPI controllers.
 """
 
 from fastapi import Depends
