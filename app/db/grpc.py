@@ -3,6 +3,7 @@ gRPC Client Initialization.
 Sets up async channels with keepalive pings to interact with the LLM Service and probes connectivity.
 """
 
+import asyncio
 from typing import Optional
 import grpc
 from app.core.config import settings
@@ -42,7 +43,7 @@ class GRPCClientManager:
 
     async def check_health(self) -> bool:
         """
-        Verifies if gRPC channels are ready to receive stream connections.
+        Verifies if gRPC client channel is initialized and active (not SHUTDOWN).
         """
         if not self.channel:
             logger.info("gRPC channel inactive, attempting lazy initialization...")
@@ -50,9 +51,8 @@ class GRPCClientManager:
         if not self.channel:
             return False
         try:
-            # Wait for channel readiness with a brief timeout
-            await grpc.aio.channel_ready(self.channel)
-            return True
+            state = self.channel.get_state(try_to_connect=False)
+            return state != grpc.ChannelConnectivity.SHUTDOWN
         except Exception as e:
             logger.warning("gRPC server health check failed", error=str(e))
             return False

@@ -29,21 +29,40 @@ class CassandraMessageRepository:
             self._statements[name] = session.prepare(cql)
         return self._statements[name]
 
-    def create(self, conversation_id: UUID, message_id: UUID, sender: str, content: str, status: str = "sent") -> Message:
+    def create_with_outbox(
+        self,
+        conversation_id: UUID,
+        message_id: UUID,
+        sender: str,
+        content: str,
+        status: str,
+        event_id: UUID,
+        event_type: str,
+        outbox_payload: str
+    ) -> Message:
         """
-        Inserts message using client-side microsecond timestamps for LWW correctness.
+        Atomic transactional write saving message data and outbox task in a single LOGGED BATCH.
+        Uses client-side microsecond timestamps for LWW correctness.
         """
         now = datetime.now(timezone.utc)
         timestamp_micros = int(time.time() * 1000000)
+        bucket = conversation_id.int % 32
         
         cql = """
-            INSERT INTO messages_by_conversation (conversation_id, message_id, sender, content, created_at, status)
-            VALUES (?, ?, ?, ?, ?, ?)
-            USING TIMESTAMP ?;
+            BEGIN BATCH
+                INSERT INTO messages_by_conversation (conversation_id, message_id, sender, content, created_at, status)
+                VALUES (?, ?, ?, ?, ?, ?)
+                USING TIMESTAMP ?;
+                
+                INSERT INTO transactional_outbox (bucket, event_id, event_type, payload, published, created_at)
+                VALUES (?, ?, ?, ?, ?, ?);
+            APPLY BATCH;
         """
-        stmt = self._get_prepared("create_msg", cql)
+        stmt = self._get_prepared("create_msg_outbox", cql)
+        
         self.manager.session.execute(stmt, (
-            conversation_id, message_id, sender, content, now, status, timestamp_micros
+            conversation_id, message_id, sender, content, now, status, timestamp_micros,
+            bucket, event_id, event_type, outbox_payload, False, now
         ))
         
         return Message(

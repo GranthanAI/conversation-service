@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from uuid import UUID
 from app.db.cassandra import cassandra_manager
 from app.models.conversation import Conversation, ConversationStatus
-from app.core.logging import logger
 
 class CassandraConversationRepository:
     """
@@ -29,25 +28,38 @@ class CassandraConversationRepository:
             self._statements[name] = session.prepare(cql)
         return self._statements[name]
 
-    def create(self, conversation_id: UUID, user_id: UUID, title: str, status: str = "active") -> Conversation:
+    def create_with_outbox(
+        self,
+        conversation_id: UUID,
+        user_id: UUID,
+        title: str,
+        status: str,
+        event_id: UUID,
+        event_type: str,
+        outbox_payload: str
+    ) -> Conversation:
         """
-        Atomically denormalizes a new conversation into the lookup and index tables.
+        Atomic transactional write saving conversation data and outbox task inside a single LOGGED BATCH.
         """
         now = datetime.now(timezone.utc)
+        bucket = conversation_id.int % 32
+        
         cql = """
             BEGIN BATCH
                 INSERT INTO conversations (conversation_id, user_id, title, created_at, updated_at, status)
                 VALUES (?, ?, ?, ?, ?, ?);
                 INSERT INTO conversations_by_user (user_id, updated_at, conversation_id, title, created_at, status)
                 VALUES (?, ?, ?, ?, ?, ?);
+                INSERT INTO transactional_outbox (bucket, event_id, event_type, payload, published, created_at)
+                VALUES (?, ?, ?, ?, ?, ?);
             APPLY BATCH;
         """
-        stmt = self._get_prepared("create_conv", cql)
+        stmt = self._get_prepared("create_conv_outbox", cql)
         
-        # Execute BATCH
         self.manager.session.execute(stmt, (
             conversation_id, user_id, title, now, now, status,
-            user_id, now, conversation_id, title, now, status
+            user_id, now, conversation_id, title, now, status,
+            bucket, event_id, event_type, outbox_payload, False, now
         ))
         
         return Conversation(
@@ -83,18 +95,25 @@ class CassandraConversationRepository:
             status=ConversationStatus(row.status)
         )
 
-    def update(self, conversation_id: UUID, title: str, status: str) -> Optional[Conversation]:
+    def update_with_outbox(
+        self,
+        conversation_id: UUID,
+        title: str,
+        status: str,
+        event_id: UUID,
+        event_type: str,
+        outbox_payload: str
+    ) -> Optional[Conversation]:
         """
-        Updates metadata, handling the clustering key deletion-insertion in conversations_by_user.
+        Atomic transactional update updating conversation metadata and staging outbox events in a single LOGGED BATCH.
         """
-        # 1. Fetch current version to retrieve clustering keys
         conv = self.get(conversation_id)
         if not conv:
             return None
 
         new_updated_at = datetime.now(timezone.utc)
+        bucket = conversation_id.int % 32
 
-        # Logged Batch to delete the old clustering key index and insert the new one
         cql = """
             BEGIN BATCH
                 DELETE FROM conversations_by_user
@@ -106,14 +125,18 @@ class CassandraConversationRepository:
                 UPDATE conversations
                 SET title = ?, updated_at = ?, status = ?
                 WHERE conversation_id = ?;
+                
+                INSERT INTO transactional_outbox (bucket, event_id, event_type, payload, published, created_at)
+                VALUES (?, ?, ?, ?, ?, ?);
             APPLY BATCH;
         """
-        stmt = self._get_prepared("update_conv", cql)
+        stmt = self._get_prepared("update_conv_outbox", cql)
         
         self.manager.session.execute(stmt, (
             conv.user_id, conv.updated_at, conversation_id,
             conv.user_id, new_updated_at, conversation_id, title, conv.created_at, status,
-            title, new_updated_at, status, conversation_id
+            title, new_updated_at, status, conversation_id,
+            bucket, event_id, event_type, outbox_payload, False, new_updated_at
         ))
 
         return Conversation(
@@ -125,15 +148,30 @@ class CassandraConversationRepository:
             status=ConversationStatus(status)
         )
 
-    def delete(self, conversation_id: UUID) -> bool:
+    def delete_with_outbox(
+        self,
+        conversation_id: UUID,
+        event_id: UUID,
+        event_type: str,
+        outbox_payload: str
+    ) -> bool:
         """
-        Soft-deletes a conversation catalog by setting its status to deleted.
+        Soft deletes a conversation and stages the outbox delete event in a single LOGGED BATCH.
         """
         conv = self.get(conversation_id)
         if not conv:
             return False
-        self.update(conversation_id, conv.title, "deleted")
-        return True
+        
+        # Soft delete is an update statement setting status to deleted
+        result = self.update_with_outbox(
+            conversation_id=conversation_id,
+            title=conv.title,
+            status="deleted",
+            event_id=event_id,
+            event_type=event_type,
+            outbox_payload=outbox_payload
+        )
+        return result is not None
 
     def list(self, user_id: UUID, limit: int = 20, cursor: Optional[datetime] = None) -> List[Conversation]:
         """
@@ -160,7 +198,6 @@ class CassandraConversationRepository:
 
         conversations = []
         for row in rows:
-            # Skip soft deleted entries
             if row.status == "deleted":
                 continue
             conversations.append(Conversation(

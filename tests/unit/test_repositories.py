@@ -45,15 +45,24 @@ def mock_cassandra_manager():
         
         yield mock_session
 
-def test_conversation_repository_create(mock_cassandra_manager):
+def test_conversation_repository_create_with_outbox(mock_cassandra_manager):
     repo = CassandraConversationRepository()
     conv_id = uuid.uuid4()
     user_id = uuid.uuid4()
+    event_id = uuid.uuid1()
     
     mock_prepared = MagicMock()
     mock_cassandra_manager.prepare.return_value = mock_prepared
     
-    conv = repo.create(conv_id, user_id, "Hello Test")
+    conv = repo.create_with_outbox(
+        conversation_id=conv_id,
+        user_id=user_id,
+        title="Hello Test",
+        status="active",
+        event_id=event_id,
+        event_type="conversation.created",
+        outbox_payload="{}"
+    )
     
     assert conv.conversation_id == conv_id
     assert conv.user_id == user_id
@@ -68,7 +77,6 @@ def test_conversation_repository_get(mock_cassandra_manager):
     user_id = uuid.uuid4()
     now = datetime.now(timezone.utc)
     
-    # Mock row returned from database
     mock_row = MagicMock()
     mock_row.conversation_id = conv_id
     mock_row.user_id = user_id
@@ -84,11 +92,12 @@ def test_conversation_repository_get(mock_cassandra_manager):
     assert conv.conversation_id == conv_id
     assert conv.title == "Hello Test"
 
-def test_conversation_repository_update(mock_cassandra_manager):
+def test_conversation_repository_update_with_outbox(mock_cassandra_manager):
     repo = CassandraConversationRepository()
     conv_id = uuid.uuid4()
     user_id = uuid.uuid4()
     now = datetime.now(timezone.utc)
+    event_id = uuid.uuid1()
     
     # Mock row for initial get() query
     mock_row = MagicMock()
@@ -102,17 +111,34 @@ def test_conversation_repository_update(mock_cassandra_manager):
     mock_cassandra_manager.execute.return_value.one.return_value = mock_row
     
     # Execute update
-    updated_conv = repo.update(conv_id, "New Title", "archived")
+    updated_conv = repo.update_with_outbox(
+        conversation_id=conv_id,
+        title="New Title",
+        status="archived",
+        event_id=event_id,
+        event_type="conversation.updated",
+        outbox_payload="{}"
+    )
     assert updated_conv is not None
     assert updated_conv.title == "New Title"
     assert updated_conv.status == ConversationStatus.ARCHIVED
 
-def test_message_repository_create(mock_cassandra_manager):
+def test_message_repository_create_with_outbox(mock_cassandra_manager):
     repo = CassandraMessageRepository()
     conv_id = uuid.uuid4()
     msg_id = uuid.uuid4()
+    event_id = uuid.uuid1()
     
-    msg = repo.create(conv_id, msg_id, "user", "Message content")
+    msg = repo.create_with_outbox(
+        conversation_id=conv_id,
+        message_id=msg_id,
+        sender="user",
+        content="Message content",
+        status="sent",
+        event_id=event_id,
+        event_type="chat.message.created",
+        outbox_payload="{}"
+    )
     assert msg.conversation_id == conv_id
     assert msg.message_id == msg_id
     assert msg.content == "Message content"
@@ -132,10 +158,8 @@ def test_inbox_repository_exists(mock_cassandra_manager):
     repo = CassandraInboxRepository()
     event_id = uuid.uuid4()
     
-    # Mock event not exists
     mock_cassandra_manager.execute.return_value.one.return_value = None
     assert repo.exists(event_id) is False
     
-    # Mock event exists
     mock_cassandra_manager.execute.return_value.one.return_value = MagicMock()
     assert repo.exists(event_id) is True
