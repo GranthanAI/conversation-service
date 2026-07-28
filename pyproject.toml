@@ -23,5 +23,6 @@ dependencies = [
 dev = [
     "pytest",
     "pytest-asyncio",
-    "testcontainers[kafka,redis]"
+    "testcontainers[kafka,redis]",
+    "httpx"
 ]

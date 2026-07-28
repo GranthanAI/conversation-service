@@ -15,7 +15,6 @@ class CreateConversationRequest(BaseModel):
     title: str = Field(..., description="Initial title for conversation catalog", min_length=1, max_length=255)
 
     @field_validator("title")
-
     def validate_title(cls, v: str) -> str:
         trimmed = v.strip()
         if not trimmed:
@@ -29,7 +28,6 @@ class RenameConversationRequest(BaseModel):
     title: str = Field(..., description="New title for conversation catalog", min_length=1, max_length=255)
 
     @field_validator("title")
-
     def validate_title(cls, v: str) -> str:
         trimmed = v.strip()
         if not trimmed:
@@ -47,12 +45,12 @@ class ConversationResponse(BaseModel):
     updated_at: datetime
     status: str
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 class ConversationListResponse(BaseModel):
     """
     Paginated response container for user conversation catalogs.
     """
     items: List[ConversationResponse]
-    next_cursor: Optional[datetime] = None
+    next_cursor: Optional[str] = None
+    has_more: bool = False

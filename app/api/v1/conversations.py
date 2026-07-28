@@ -22,6 +22,7 @@ from app.schemas.conversation import (
     ConversationResponse,
     ConversationListResponse
 )
+from app.utils.pagination import encode_cursor, decode_cursor
 
 router = APIRouter()
 
@@ -40,16 +41,33 @@ async def create_conversation(
 @router.get("", response_model=ConversationListResponse, status_code=status.HTTP_200_OK, summary="List user conversations")
 async def list_conversations(
     limit: int = Query(20, ge=1, le=100),
-    cursor: Optional[datetime] = Query(None),
+    cursor: Optional[str] = Query(None),
     current_user: CurrentUser = Depends(get_current_user),
     service: ConversationService = Depends(get_conversation_service)
 ):
     """
-    Lists conversation catalogs for the authenticated user ordered by updated_at DESC.
+    Lists conversation catalogs for the authenticated user ordered by updated_at DESC using opaque cursor pagination.
     """
-    items = service.list(user_id=current_user.id, limit=limit, cursor=cursor)
-    next_cursor = items[-1].updated_at if len(items) == limit else None
-    return ConversationListResponse(items=items, next_cursor=next_cursor)
+    cursor_updated_at = None
+    if cursor:
+        cursor_payload = decode_cursor(cursor)
+        iso_str = cursor_payload.get("updated_at")
+        if iso_str:
+            cursor_updated_at = datetime.fromisoformat(iso_str)
+
+    items = service.list(user_id=current_user.id, limit=limit, cursor=cursor_updated_at)
+    
+    next_cursor = None
+    has_more = False
+    if len(items) == limit:
+        last_item = items[-1]
+        next_cursor = encode_cursor({
+            "updated_at": last_item.updated_at.isoformat(),
+            "conversation_id": str(last_item.conversation_id)
+        })
+        has_more = True
+
+    return ConversationListResponse(items=items, next_cursor=next_cursor, has_more=has_more)
 
 @router.get("/{conversation_id}", response_model=ConversationResponse, status_code=status.HTTP_200_OK, summary="Get conversation")
 async def get_conversation(

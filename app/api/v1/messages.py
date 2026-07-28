@@ -20,6 +20,7 @@ from app.schemas.message import (
     MessageListResponse
 )
 from app.utils.helpers import uuidv7
+from app.utils.pagination import encode_cursor, decode_cursor
 
 router = APIRouter()
 
@@ -46,16 +47,30 @@ async def create_message(
 async def get_message_history(
     conversation_id: UUID,
     limit: int = Query(50, ge=1, le=100),
-    cursor: Optional[UUID] = Query(None),
+    cursor: Optional[str] = Query(None),
     conv: Conversation = Depends(require_conversation_owner),
     service: MessageService = Depends(get_message_service)
 ):
     """
-    Fetches paginated message logs using Cache-Aside caching (requires ownership).
+    Fetches paginated message logs using Cache-Aside caching and opaque cursor pagination (requires ownership).
     """
-    items = await service.history(conversation_id=conversation_id, limit=limit, cursor=cursor)
-    next_cursor = items[-1].message_id if len(items) == limit else None
-    return MessageListResponse(items=items, next_cursor=next_cursor)
+    cursor_message_id = None
+    if cursor:
+        cursor_payload = decode_cursor(cursor)
+        msg_id_str = cursor_payload.get("message_id")
+        if msg_id_str:
+            cursor_message_id = UUID(msg_id_str)
+
+    items = await service.history(conversation_id=conversation_id, limit=limit, cursor=cursor_message_id)
+    
+    next_cursor = None
+    has_more = False
+    if len(items) == limit:
+        last_item = items[-1]
+        next_cursor = encode_cursor({"message_id": str(last_item.message_id)})
+        has_more = True
+
+    return MessageListResponse(items=items, next_cursor=next_cursor, has_more=has_more)
 
 @router.post("/{conversation_id}/messages/{message_id}/regenerate", response_model=MessageResponse, status_code=status.HTTP_202_ACCEPTED, summary="Regenerate message")
 async def regenerate_message(

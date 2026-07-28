@@ -15,7 +15,6 @@ class CreateMessageRequest(BaseModel):
     content: str = Field(..., description="Message text content", min_length=1, max_length=8000)
 
     @field_validator("content")
-
     def validate_content(cls, v: str) -> str:
         trimmed = v.strip()
         if not trimmed:
@@ -33,12 +32,12 @@ class MessageResponse(BaseModel):
     created_at: datetime
     status: str
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 class MessageListResponse(BaseModel):
     """
     Paginated response container for message history.
     """
     items: List[MessageResponse]
-    next_cursor: Optional[UUID] = None
+    next_cursor: Optional[str] = None
+    has_more: bool = False
