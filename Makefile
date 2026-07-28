@@ -10,6 +10,11 @@ help:
 	@echo "  make dev        - Launch the FastAPI development server"
 	@echo "  make test       - Run pytest unit tests suite"
 	@echo "  make clean      - Remove __pycache__ and build files"
+	@echo "  Tailing Kafka Topics:"
+	@echo "    make kafka-log-conv-created - Stream conversation.created topic"
+	@echo "    make kafka-log-conv-updated - Stream conversation.updated topic"
+	@echo "    make kafka-log-conv-deleted - Stream conversation.deleted topic"
+	@echo "    make kafka-log-msg-created  - Stream chat.message.created topic"
 	@echo "========================================================================"
 
 setup:
@@ -30,3 +35,16 @@ test:
 
 clean:
 	@python -c "import shutil, glob; [shutil.rmtree(p, ignore_errors=True) for p in glob.glob('**/__pycache__', recursive=True)]"
+
+kafka-log-conv-created:
+	docker exec -it graphgpt-kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic conversation.created --from-beginning
+
+kafka-log-conv-updated:
+	docker exec -it graphgpt-kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic conversation.updated --from-beginning
+
+kafka-log-conv-deleted:
+	docker exec -it graphgpt-kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic conversation.deleted --from-beginning
+
+kafka-log-msg-created:
+	docker exec -it graphgpt-kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic chat.message.created --from-beginning
+

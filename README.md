@@ -135,3 +135,20 @@ The server will start listening at `http://localhost:8000`. You can inspect endp
 | `make schema` | Applies database tables to Cassandra. |
 | `make dev` | Launches FastAPI reload development server on port 8000. |
 | `make clean` | Purges compiler output caches recursively. |
+| `make kafka-log-conv-created` | Streams the `conversation.created` Kafka topic. |
+| `make kafka-log-conv-updated` | Streams the `conversation.updated` Kafka topic. |
+| `make kafka-log-conv-deleted` | Streams the `conversation.deleted` Kafka topic. |
+| `make kafka-log-msg-created` | Streams the `chat.message.created` Kafka topic. |
+
+---
+
+## Tailing Kafka Logs (Local Testing)
+To view messages produced to Kafka in real-time when executing requests on Swagger UI (`http://localhost:8000/docs`), open a new terminal window and run:
+
+```bash
+# Using Makefile:
+make kafka-log-msg-created
+
+# Or directly using Docker CLI:
+docker exec -it graphgpt-kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic chat.message.created --from-beginning
+```

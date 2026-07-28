@@ -1,7 +1,6 @@
 """
 Message Service.
-Coordinates Cache-Aside caching and database operations atomically using batch writes,
-leveraging a centralized CacheService.
+Coordinates Cache-Aside caching, database operations, and direct Kafka event publishing.
 """
 
 import json
@@ -15,18 +14,21 @@ from app.models.message import Message, MessageStatus
 from app.events.topics import KafkaTopics
 from app.core.logging import logger
 from app.services.cache_service import CacheService
+from app.clients.kafka_producer import KafkaProducerClient
 
 class MessageService:
     """
-    Service orchestrator handling conversational message logs and streaming triggers atomically.
+    Service orchestrator handling conversational message logs and streaming triggers.
     """
     def __init__(
         self,
         repo: CassandraMessageRepository,
-        cache_service: Optional[CacheService] = None
+        cache_service: Optional[CacheService] = None,
+        producer_client: Optional[KafkaProducerClient] = None
     ):
         self.repo = repo
         self.cache = cache_service
+        self.producer = producer_client
 
     async def _invalidate_cache(self, conversation_id: UUID):
         """
@@ -37,7 +39,7 @@ class MessageService:
 
     async def send(self, conversation_id: UUID, message_id: UUID, sender: str, content: str) -> Message:
         """
-        Persists a message atomically with its outbox event inside a single Cassandra batch.
+        Persists a message atomically, updates cache, and publishes directly to Kafka.
         """
         event_id = uuid.uuid1()
         payload = {
@@ -62,11 +64,19 @@ class MessageService:
         # Invalidate history cache
         await self._invalidate_cache(conversation_id)
         
+        # Direct Kafka publish
+        if self.producer:
+            await self.producer.publish(
+                topic=KafkaTopics.CHAT_MESSAGE_CREATED,
+                key=str(conversation_id),
+                value=payload
+            )
+            
         return msg
 
     async def history(self, conversation_id: UUID, limit: int = 50, cursor: Optional[UUID] = None) -> List[Message]:
         """
-        Returns message history page using Cache-Aside (only for the first page).
+        Returns message history page using Cache-Aside.
         """
         if cursor is None and self.cache:
             messages = await self.cache.get_last_50_messages(conversation_id, limit)
@@ -93,7 +103,7 @@ class MessageService:
 
     async def regenerate(self, conversation_id: UUID, message_id: UUID) -> Optional[Message]:
         """
-        Soft-deletes the target assistant message and atomically stages regeneration outbox task.
+        Soft-deletes the target assistant message and atomically stages and publishes regeneration event.
         """
         history_msgs = self.repo.history(conversation_id, limit=50)
         
@@ -112,9 +122,11 @@ class MessageService:
 
         # Calculate outbox params for new assistant streaming response
         event_id = uuid.uuid1()
+        new_msg_id = uuid.uuid1() # generate a new response task ID
+        
         payload = {
             "conversation_id": str(conversation_id),
-            "message_id": str(message_id),
+            "message_id": str(new_msg_id),
             "sender": "assistant",
             "content": "",
             "prompt_content": prompt_msg.content if prompt_msg else "",
@@ -127,7 +139,6 @@ class MessageService:
             self.repo.delete(conversation_id, message_id)
 
         # Create new pending message atomic with outbox
-        new_msg_id = uuid.uuid1() # generate a new response task ID
         self.repo.create_with_outbox(
             conversation_id=conversation_id,
             message_id=new_msg_id,
@@ -140,4 +151,13 @@ class MessageService:
         )
 
         await self._invalidate_cache(conversation_id)
+        
+        # Direct Kafka publish
+        if self.producer:
+            await self.producer.publish(
+                topic=KafkaTopics.CHAT_MESSAGE_CREATED,
+                key=str(conversation_id),
+                value=payload
+            )
+            
         return target_msg
