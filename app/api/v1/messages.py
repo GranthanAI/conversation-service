@@ -1,18 +1,22 @@
 """
 Message API Router.
-Handles protected message history and generation streaming trigger endpoints with JWT authentication and ownership validation.
+Handles protected message history, generation triggers, and idempotency request handling.
 """
 
+import uuid
+import json
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, status, Query, Response, HTTPException
+from fastapi import APIRouter, Depends, status, Query, Response, HTTPException, Header
 
 from app.security import (
     require_conversation_owner,
     CurrentUser
 )
-from app.api.deps import get_message_service
+from app.api.deps import get_message_service, get_idempotency_service
 from app.services.message_service import MessageService
+from app.services.idempotency_service import IdempotencyService
 from app.models.conversation import Conversation
 from app.schemas.message import (
     CreateMessageRequest,
@@ -28,19 +32,67 @@ router = APIRouter()
 async def create_message(
     conversation_id: UUID,
     payload: CreateMessageRequest,
+    x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
     conv: Conversation = Depends(require_conversation_owner),
-    service: MessageService = Depends(get_message_service)
+    service: MessageService = Depends(get_message_service),
+    idempotency_service: IdempotencyService = Depends(get_idempotency_service)
 ):
     """
     Appends a new user message to the conversation log and triggers streaming outbox events (requires ownership).
+    Supports safe retries using client-supplied X-Idempotency-Key.
     """
+    if x_idempotency_key:
+        try:
+            uuid.UUID(x_idempotency_key)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="X-Idempotency-Key must be a valid UUIDv4"
+            )
+
+        lock_status = await idempotency_service.claim_key(x_idempotency_key)
+        if lock_status == "processing":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A concurrent request with this idempotency key is already in progress"
+            )
+        elif lock_status is not None:
+            # Found cached response payload
+            cached_data = json.loads(lock_status)
+            return MessageResponse(
+                message_id=UUID(cached_data["message_id"]),
+                conversation_id=UUID(cached_data["conversation_id"]),
+                sender=cached_data["sender"],
+                content=cached_data["content"],
+                created_at=datetime.fromisoformat(cached_data["created_at"]),
+                status=cached_data["status"]
+            )
+
+    # Process normally
     message_id = uuidv7()
-    msg = await service.send(
-        conversation_id=conversation_id,
-        message_id=message_id,
-        sender="user",
-        content=payload.content
-    )
+    try:
+        msg = await service.send(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            sender="user",
+            content=payload.content
+        )
+    except Exception as e:
+        if x_idempotency_key:
+            await idempotency_service.remove_lock(x_idempotency_key)
+        raise e
+
+    if x_idempotency_key:
+        response_data = {
+            "message_id": str(msg.message_id),
+            "conversation_id": str(msg.conversation_id),
+            "sender": msg.sender,
+            "content": msg.content,
+            "created_at": msg.created_at.isoformat(),
+            "status": msg.status.value
+        }
+        await idempotency_service.save_response(x_idempotency_key, response_data)
+
     return msg
 
 @router.get("/{conversation_id}/messages", response_model=MessageListResponse, status_code=status.HTTP_200_OK, summary="Get conversation message history")

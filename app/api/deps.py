@@ -13,6 +13,7 @@ from app.repositories.inbox_repository import CassandraInboxRepository
 from app.services.cache_service import CacheService
 from app.services.conversation_service import ConversationService
 from app.services.message_service import MessageService
+from app.services.idempotency_service import IdempotencyService
 from app.db.redis import redis_manager
 
 # --- Repository Factory Injections ---
@@ -68,3 +69,9 @@ def get_message_service(
     Factory method injecting MessageService with repository and cache DI.
     """
     return MessageService(repo=repo, cache_service=cache_service)
+
+def get_idempotency_service() -> IdempotencyService:
+    """
+    Factory method injecting the centralized IdempotencyService.
+    """
+    return IdempotencyService(redis_client=redis_manager.client)
