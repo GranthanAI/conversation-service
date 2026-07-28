@@ -5,7 +5,7 @@ Verifies JWT verification, CurrentUser claim construction, expiration rules, and
 
 from datetime import datetime, timezone, timedelta
 import uuid
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 import jwt
 import pytest
 from fastapi import HTTPException
@@ -93,14 +93,14 @@ async def test_require_conversation_owner_success():
     user = CurrentUser(id=user_id)
     
     mock_service = MagicMock()
-    mock_service.repo.get.return_value = Conversation(
+    mock_service.get = AsyncMock(return_value=Conversation(
         conversation_id=conv_id,
         user_id=user_id,
         title="My Conversation",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         status=ConversationStatus.ACTIVE
-    )
+    ))
     
     conv = await require_conversation_owner(
         conversation_id=conv_id,
@@ -118,14 +118,14 @@ async def test_require_conversation_owner_forbidden():
     user = CurrentUser(id=other_user_id)
     
     mock_service = MagicMock()
-    mock_service.repo.get.return_value = Conversation(
+    mock_service.get = AsyncMock(return_value=Conversation(
         conversation_id=conv_id,
         user_id=owner_user_id,
         title="Owner Conversation",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         status=ConversationStatus.ACTIVE
-    )
+    ))
     
     with pytest.raises(HTTPException) as exc_info:
         await require_conversation_owner(
@@ -141,7 +141,7 @@ async def test_require_conversation_owner_not_found():
     user = CurrentUser(id=uuid.uuid4())
     
     mock_service = MagicMock()
-    mock_service.repo.get.return_value = None
+    mock_service.get = AsyncMock(return_value=None)
     
     with pytest.raises(HTTPException) as exc_info:
         await require_conversation_owner(

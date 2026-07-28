@@ -1,14 +1,16 @@
 """
 API Dependency Factory Methods.
-Provides repository and service resource injections for FastAPI controllers.
+Provides repository, service, and cache resource injections for FastAPI controllers.
 """
 
 from fastapi import Depends
+
 from app.repositories.conversation_repository import CassandraConversationRepository
 from app.repositories.message_repository import CassandraMessageRepository
 from app.repositories.outbox_repository import CassandraOutboxRepository
 from app.repositories.inbox_repository import CassandraInboxRepository
 
+from app.services.cache_service import CacheService
 from app.services.conversation_service import ConversationService
 from app.services.message_service import MessageService
 from app.db.redis import redis_manager
@@ -39,20 +41,30 @@ def get_inbox_repository() -> CassandraInboxRepository:
     """
     return CassandraInboxRepository()
 
+# --- Cache Service Factory Injection ---
+
+def get_cache_service() -> CacheService:
+    """
+    Factory method injecting the centralized CacheService.
+    """
+    return CacheService(redis_client=redis_manager.client)
+
 # --- Service Factory Injections ---
 
 def get_conversation_service(
-    repo: CassandraConversationRepository = Depends(get_conversation_repository)
+    repo: CassandraConversationRepository = Depends(get_conversation_repository),
+    cache_service: CacheService = Depends(get_cache_service)
 ) -> ConversationService:
     """
-    Factory method injecting ConversationService with repositories DI.
+    Factory method injecting ConversationService with repository and cache DI.
     """
-    return ConversationService(repo=repo)
+    return ConversationService(repo=repo, cache_service=cache_service)
 
 def get_message_service(
-    repo: CassandraMessageRepository = Depends(get_message_repository)
+    repo: CassandraMessageRepository = Depends(get_message_repository),
+    cache_service: CacheService = Depends(get_cache_service)
 ) -> MessageService:
     """
-    Factory method injecting MessageService with repositories and Redis pool DI.
+    Factory method injecting MessageService with repository and cache DI.
     """
-    return MessageService(repo=repo, redis_client=redis_manager.client)
+    return MessageService(repo=repo, cache_service=cache_service)

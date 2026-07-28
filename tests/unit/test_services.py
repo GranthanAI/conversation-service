@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 from app.services.conversation_service import ConversationService
 from app.services.message_service import MessageService
+from app.services.cache_service import CacheService
 from app.models.conversation import Conversation, ConversationStatus
 from app.models.message import Message, MessageStatus
 
@@ -40,7 +41,8 @@ def mock_redis_client():
     mock_client = AsyncMock()
     return mock_client
 
-def test_conversation_service_create(mock_repos):
+@pytest.mark.anyio
+async def test_conversation_service_create(mock_repos):
     mock_conv_repo, _ = mock_repos
     service = ConversationService(repo=mock_conv_repo)
     
@@ -54,12 +56,13 @@ def test_conversation_service_create(mock_repos):
         status=ConversationStatus.ACTIVE
     )
     
-    conv = service.create(user_id, "Test title")
+    conv = await service.create(user_id, "Test title")
     
     assert conv.user_id == user_id
     mock_conv_repo.create_with_outbox.assert_called_once()
 
-def test_conversation_service_rename(mock_repos):
+@pytest.mark.anyio
+async def test_conversation_service_rename(mock_repos):
     mock_conv_repo, _ = mock_repos
     service = ConversationService(repo=mock_conv_repo)
     
@@ -87,7 +90,7 @@ def test_conversation_service_rename(mock_repos):
         status=ConversationStatus.ACTIVE
     )
     
-    updated = service.rename(conv_id, "New Title")
+    updated = await service.rename(conv_id, "New Title")
     assert updated is not None
     assert updated.title == "New Title"
     mock_conv_repo.get.assert_called_once_with(conv_id)
@@ -96,7 +99,7 @@ def test_conversation_service_rename(mock_repos):
 @pytest.mark.anyio
 async def test_message_service_send(mock_repos, mock_redis_client):
     _, mock_msg_repo = mock_repos
-    service = MessageService(repo=mock_msg_repo, redis_client=mock_redis_client)
+    service = MessageService(repo=mock_msg_repo, cache_service=CacheService(redis_client=mock_redis_client))
     
     conv_id = uuid.uuid4()
     msg_id = uuid.uuid4()
@@ -119,7 +122,7 @@ async def test_message_service_send(mock_repos, mock_redis_client):
 @pytest.mark.anyio
 async def test_message_service_history_cache_hit(mock_repos, mock_redis_client):
     _, mock_msg_repo = mock_repos
-    service = MessageService(repo=mock_msg_repo, redis_client=mock_redis_client)
+    service = MessageService(repo=mock_msg_repo, cache_service=CacheService(redis_client=mock_redis_client))
     
     conv_id = uuid.uuid4()
     
@@ -137,7 +140,7 @@ async def test_message_service_history_cache_hit(mock_repos, mock_redis_client):
 @pytest.mark.anyio
 async def test_message_service_history_cache_miss(mock_repos, mock_redis_client):
     _, mock_msg_repo = mock_repos
-    service = MessageService(repo=mock_msg_repo, redis_client=mock_redis_client)
+    service = MessageService(repo=mock_msg_repo, cache_service=CacheService(redis_client=mock_redis_client))
     
     conv_id = uuid.uuid4()
     now = datetime.now(timezone.utc)

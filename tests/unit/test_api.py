@@ -35,6 +35,11 @@ def mock_user():
 @pytest.fixture
 def mock_services():
     mock_conv_service = MagicMock()
+    mock_conv_service.create = AsyncMock()
+    mock_conv_service.rename = AsyncMock()
+    mock_conv_service.archive = AsyncMock()
+    mock_conv_service.delete = AsyncMock()
+    mock_conv_service.get = AsyncMock()
     mock_msg_service = AsyncMock()
     return mock_conv_service, mock_msg_service
 
@@ -125,7 +130,7 @@ def test_api_send_message(mock_user, mock_services):
     msg_id = uuid.uuid4()
     now = datetime.now(timezone.utc)
     
-    mock_conv_service.repo.get.return_value = Conversation(
+    mock_conv_service.get.return_value = Conversation(
         conversation_id=conv_id,
         user_id=mock_user.id,
         title="My Conv",

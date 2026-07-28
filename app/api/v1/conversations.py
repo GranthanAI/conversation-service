@@ -35,7 +35,7 @@ async def create_conversation(
     """
     Creates a new conversation catalog for the authenticated user.
     """
-    conv = service.create(user_id=current_user.id, title=payload.title)
+    conv = await service.create(user_id=current_user.id, title=payload.title)
     return conv
 
 @router.get("", response_model=ConversationListResponse, status_code=status.HTTP_200_OK, summary="List user conversations")
@@ -89,7 +89,7 @@ async def rename_conversation(
     """
     Renames a conversation title (requires ownership).
     """
-    updated = service.rename(conversation_id=conversation_id, new_title=payload.title)
+    updated = await service.rename(conversation_id=conversation_id, new_title=payload.title)
     return updated
 
 @router.post("/{conversation_id}/archive", response_model=ConversationResponse, status_code=status.HTTP_200_OK, summary="Archive conversation")
@@ -101,7 +101,7 @@ async def archive_conversation(
     """
     Archives a conversation (requires ownership).
     """
-    archived = service.archive(conversation_id=conversation_id)
+    archived = await service.archive(conversation_id=conversation_id)
     return archived
 
 @router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Soft delete conversation")
@@ -113,5 +113,5 @@ async def delete_conversation(
     """
     Soft-deletes a conversation (requires ownership).
     """
-    service.delete(conversation_id=conversation_id)
+    await service.delete(conversation_id=conversation_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

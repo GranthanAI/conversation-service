@@ -33,7 +33,7 @@ async def require_conversation_owner(
     """
     FastAPI dependency verifying conversation existence (404) and matching user ownership (403).
     """
-    conv = service.repo.get(conversation_id)
+    conv = await service.get(conversation_id)
     if not conv:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
