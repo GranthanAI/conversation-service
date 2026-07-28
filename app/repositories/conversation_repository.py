@@ -209,3 +209,33 @@ class CassandraConversationRepository:
                 status=ConversationStatus(row.status)
             ))
         return conversations
+
+    def update_title(self, conversation_id: UUID, title: str) -> bool:
+        """
+        Updates the title of a conversation directly in Cassandra tables (no outbox staging).
+        """
+        conv = self.get(conversation_id)
+        if not conv:
+            return False
+
+        new_updated_at = datetime.now(timezone.utc)
+        cql = """
+            BEGIN BATCH
+                DELETE FROM conversations_by_user
+                WHERE user_id = ? AND updated_at = ? AND conversation_id = ?;
+                
+                INSERT INTO conversations_by_user (user_id, updated_at, conversation_id, title, created_at, status)
+                VALUES (?, ?, ?, ?, ?, ?);
+                
+                UPDATE conversations
+                SET title = ?, updated_at = ?
+                WHERE conversation_id = ?;
+            APPLY BATCH;
+        """
+        stmt = self._get_prepared("update_conv_title_direct", cql)
+        self.manager.session.execute(stmt, (
+            conv.user_id, conv.updated_at, conversation_id,
+            conv.user_id, new_updated_at, conversation_id, title, conv.created_at, conv.status.value,
+            title, new_updated_at, conversation_id
+        ))
+        return True

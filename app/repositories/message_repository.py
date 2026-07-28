@@ -123,3 +123,32 @@ class CassandraMessageRepository:
         stmt = self._get_prepared("delete_msg", cql)
         self.manager.session.execute(stmt, (conversation_id, message_id))
         return True
+
+    def create_message_direct(
+        self,
+        conversation_id: UUID,
+        message_id: UUID,
+        sender: str,
+        content: str,
+        status: str
+    ) -> Message:
+        """
+        Inserts/updates a message directly in Cassandra without staging outbox event.
+        """
+        now = datetime.now(timezone.utc)
+        cql = """
+            INSERT INTO messages_by_conversation (conversation_id, message_id, sender, content, created_at, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """
+        stmt = self._get_prepared("create_msg_direct", cql)
+        self.manager.session.execute(stmt, (
+            conversation_id, message_id, sender, content, now, status
+        ))
+        return Message(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            sender=sender,
+            content=content,
+            created_at=now,
+            status=MessageStatus(status)
+        )

@@ -161,3 +161,41 @@ class MessageService:
             )
             
         return target_msg
+
+    async def finalize_assistant_message(
+        self,
+        conversation_id: UUID,
+        message_id: UUID,
+        content: str
+    ) -> Message:
+        """
+        Saves the completed assistant message directly to Cassandra and evicts the history cache.
+        """
+        msg = self.repo.create_message_direct(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            sender="assistant",
+            content=content,
+            status="sent"
+        )
+        await self._invalidate_cache(conversation_id)
+        return msg
+
+    async def attach_summary(
+        self,
+        conversation_id: UUID,
+        summary: str
+    ) -> Message:
+        """
+        Attaches the summary by saving a special system summary message to Cassandra and evicting the cache.
+        """
+        summary_msg_id = uuid.uuid4()
+        msg = self.repo.create_message_direct(
+            conversation_id=conversation_id,
+            message_id=summary_msg_id,
+            sender="system",
+            content=f"Summary: {summary}",
+            status="sent"
+        )
+        await self._invalidate_cache(conversation_id)
+        return msg

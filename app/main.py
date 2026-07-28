@@ -17,12 +17,14 @@ sys.modules['asyncore'] = asyncore_mock
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response, status
 from app.core.config import settings
+import asyncio
 from app.core.logging import logger
 from app.db.cassandra import cassandra_manager
 from app.db.redis import redis_manager
 from app.db.kafka import kafka_manager
 from app.db.grpc import grpc_manager
 from app.api.router import api_router
+from app.events.consumers import start_kafka_consumer
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -35,9 +37,21 @@ async def lifespan(app: FastAPI):
     redis_manager.initialize()
     await kafka_manager.initialize()
     await grpc_manager.initialize()
+    
+    # Spawn background consumer task
+    app.state.kafka_consumer_task = asyncio.create_task(start_kafka_consumer())
+    
     yield
     # 2. Shutdown phase
     logger.info("Shutting down FastAPI application lifespan context...")
+    
+    # Cancel background consumer task
+    app.state.kafka_consumer_task.cancel()
+    try:
+        await app.state.kafka_consumer_task
+    except asyncio.CancelledError:
+        pass
+        
     cassandra_manager.close()
     await redis_manager.close()
     await kafka_manager.close()

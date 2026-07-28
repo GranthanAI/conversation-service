@@ -195,3 +195,12 @@ class ConversationService:
         Lists user conversations.
         """
         return self.repo.list(user_id, limit, cursor)
+
+    async def set_title(self, conversation_id: UUID, title: str) -> bool:
+        """
+        Directly sets the title of a conversation in Cassandra and evicts its cache key.
+        """
+        success = self.repo.update_title(conversation_id, title)
+        if success and self.cache:
+            await self.cache.delete_conversation(conversation_id)
+        return success
