@@ -40,7 +40,7 @@ class MessageService:
 
     async def send(self, conversation_id: UUID, message_id: UUID, sender: str, content: str) -> Message:
         """
-        Persists a message atomically, updates cache, and publishes directly to Kafka.
+        Persists a message atomically, updates cache, and stages outbox task.
         """
         event_id = uuid.uuid1()
         payload = {
@@ -64,16 +64,8 @@ class MessageService:
         
         # Invalidate history cache
         await self._invalidate_cache(conversation_id)
-        
-        # Direct Kafka publish
-        if self.producer:
-            await self.producer.publish(
-                topic=KafkaTopics.CHAT_MESSAGE_CREATED,
-                key=str(conversation_id),
-                value=payload
-            )
 
-        # Trigger simulated LLM response in background if user sent the message
+        # Trigger simulated/real LLM response in background if user sent the message
         if sender == "user":
             assistant_msg_id = uuid.uuid4()
             self.repo.create_message_direct(
@@ -116,7 +108,7 @@ class MessageService:
 
     async def regenerate(self, conversation_id: UUID, message_id: UUID) -> Optional[Message]:
         """
-        Soft-deletes the target assistant message and atomically stages and publishes regeneration event.
+        Soft-deletes the target assistant message and atomically stages regeneration event.
         """
         history_msgs = self.repo.history(conversation_id, limit=50)
         
@@ -164,16 +156,8 @@ class MessageService:
         )
 
         await self._invalidate_cache(conversation_id)
-        
-        # Direct Kafka publish
-        if self.producer:
-            await self.producer.publish(
-                topic=KafkaTopics.CHAT_MESSAGE_CREATED,
-                key=str(conversation_id),
-                value=payload
-            )
 
-        # Trigger simulated LLM response in background
+        # Trigger simulated/real LLM response in background
         prompt_content = prompt_msg.content if prompt_msg else ""
         asyncio.create_task(self.simulate_generation_pipeline(conversation_id, new_msg_id, prompt_content))
             
@@ -219,28 +203,86 @@ class MessageService:
 
     async def simulate_generation_pipeline(self, conversation_id: UUID, message_id: UUID, prompt: str) -> None:
         """
-        Simulates downstream LLM generation by typing out a response chunk-by-chunk,
-        publishing to Redis PubSub and finalising the message state in Cassandra.
+        Calls downstream LLM gRPC service, falls back to typewriter simulation in development environment.
+        Stages any failures to the chat.message.dlq Kafka topic.
         """
-        # Wait a short moment to let SSE client connect
-        await asyncio.sleep(1.0)
-        
-        full_text = f"This is a simulated AI assistant streaming response for your prompt: '{prompt}'."
-        chunks = [full_text[i:i+4] for i in range(0, len(full_text), 4)]
-        
+        from app.clients.grpc_client import grpc_generation_client
         from app.services.stream_service import StreamService
+        from app.repositories.outbox_repository import CassandraOutboxRepository
+        from app.core.config import settings
+
         stream_service = StreamService(redis_client=self.cache.redis if self.cache else None)
-        
-        for index, chunk in enumerate(chunks):
-            is_final = (index == len(chunks) - 1)
-            chunk_payload = {
-                "conversation_id": str(conversation_id),
-                "message_id": str(message_id),
-                "sender": "assistant",
-                "content": chunk,
-                "is_final": is_final
-            }
-            await stream_service.publish_token(conversation_id, chunk_payload)
-            await asyncio.sleep(0.05)
+        accumulated_content = ""
+
+        try:
+            # 1. Attempt to run real gRPC client token generator stream
+            async for chunk in grpc_generation_client.generate(conversation_id, message_id, prompt):
+                accumulated_content += chunk["content"]
+                await stream_service.publish_token(conversation_id, chunk)
             
-        await self.finalize_assistant_message(conversation_id, message_id, full_text)
+            # Finalize message on successful completion
+            await self.finalize_assistant_message(conversation_id, message_id, accumulated_content)
+            
+        except Exception as e:
+            logger.warning("gRPC generation connection failed. Evaluating fallback policy...", error=str(e))
+            
+            if settings.ENVIRONMENT == "development":
+                logger.info("Falling back to typewriter simulation generator (Development Mode).")
+                # Wait a short moment
+                await asyncio.sleep(0.5)
+                full_text = f"This is a simulated AI assistant streaming response for your prompt: '{prompt}'."
+                chunks = [full_text[i:i+4] for i in range(0, len(full_text), 4)]
+                
+                for index, chunk in enumerate(chunks):
+                    is_final = (index == len(chunks) - 1)
+                    chunk_payload = {
+                        "conversation_id": str(conversation_id),
+                        "message_id": str(message_id),
+                        "sender": "assistant",
+                        "content": chunk,
+                        "is_final": is_final
+                    }
+                    await stream_service.publish_token(conversation_id, chunk_payload)
+                    await asyncio.sleep(0.05)
+                
+                await self.finalize_assistant_message(conversation_id, message_id, full_text)
+            else:
+                # 2. Production Failure Recovery (Retry & DLQ)
+                logger.error("Generation failed. Updating Cassandra message status and routing to DLQ.", error=str(e))
+                # Set message status to failed
+                self.repo.create_message_direct(
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                    sender="assistant",
+                    content=accumulated_content,
+                    status="failed"
+                )
+                
+                # Push failure notification to SSE stream
+                err_payload = {
+                    "conversation_id": str(conversation_id),
+                    "message_id": str(message_id),
+                    "sender": "assistant",
+                    "content": "Generation aborted: service connection lost",
+                    "is_final": True,
+                    "status": "failed"
+                }
+                await stream_service.publish_token(conversation_id, err_payload)
+                
+                # Write failure payload to Outbox mapped to the Kafka DLQ topic
+                dlq_payload = {
+                    "conversation_id": str(conversation_id),
+                    "message_id": str(message_id),
+                    "sender": "assistant",
+                    "prompt_content": prompt,
+                    "accumulated_content": accumulated_content,
+                    "error_details": str(e),
+                    "failed_at": datetime.now(timezone.utc).isoformat()
+                }
+                outbox_repo = CassandraOutboxRepository()
+                outbox_repo.save(
+                    bucket=conversation_id.int % 32,
+                    event_id=uuid.uuid1(),
+                    event_type="chat.message.dlq",
+                    payload=json.dumps(dlq_payload)
+                )

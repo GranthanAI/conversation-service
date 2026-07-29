@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package generation;
+
+service GenerationService {
+  rpc Generate(GenerationRequest) returns (stream TokenChunk);
+}
+
+message GenerationRequest {
+  string conversation_id = 1;
+  string message_id = 2;
+  string prompt_context = 3;
+}
+
+message TokenChunk {
+  string message_id = 1;
+  string chunk = 2;
+  bool is_final = 3;
+}

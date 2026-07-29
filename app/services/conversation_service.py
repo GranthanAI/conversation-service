@@ -74,19 +74,11 @@ class ConversationService:
         if self.cache:
             await self.cache.set_conversation(conv)
             
-        # Direct Kafka publish
-        if self.producer:
-            await self.producer.publish(
-                topic=KafkaTopics.CONVERSATION_CREATED,
-                key=str(conversation_id),
-                value=payload
-            )
-            
         return conv
 
     async def rename(self, conversation_id: UUID, new_title: str) -> Optional[Conversation]:
         """
-        Renames a conversation title atomically, updates cache, and publishes directly to Kafka.
+        Renames a conversation title atomically, updates cache, and schedules outbox task.
         """
         conv = await self.get(conversation_id)
         if not conv:
@@ -109,20 +101,13 @@ class ConversationService:
             outbox_payload=json.dumps(payload)
         )
         
-        if updated:
-            if self.cache:
-                await self.cache.set_conversation(updated)
-            if self.producer:
-                await self.producer.publish(
-                    topic=KafkaTopics.CONVERSATION_UPDATED,
-                    key=str(conversation_id),
-                    value=payload
-                )
+        if updated and self.cache:
+            await self.cache.set_conversation(updated)
         return updated
 
     async def archive(self, conversation_id: UUID) -> Optional[Conversation]:
         """
-        Archives a conversation atomically, updates cache, and publishes directly to Kafka.
+        Archives a conversation atomically, updates cache, and schedules outbox task.
         """
         conv = await self.get(conversation_id)
         if not conv:
@@ -145,20 +130,13 @@ class ConversationService:
             outbox_payload=json.dumps(payload)
         )
         
-        if archived:
-            if self.cache:
-                await self.cache.set_conversation(archived)
-            if self.producer:
-                await self.producer.publish(
-                    topic=KafkaTopics.CONVERSATION_UPDATED,
-                    key=str(conversation_id),
-                    value=payload
-                )
+        if archived and self.cache:
+            await self.cache.set_conversation(archived)
         return archived
 
     async def delete(self, conversation_id: UUID) -> bool:
         """
-        Soft-deletes a conversation atomically, invalidates cache, and publishes directly to Kafka.
+        Soft-deletes a conversation atomically, invalidates cache, and schedules outbox task.
         """
         conv = await self.get(conversation_id)
         if not conv:
@@ -179,15 +157,8 @@ class ConversationService:
             outbox_payload=json.dumps(payload)
         )
         
-        if success:
-            if self.cache:
-                await self.cache.delete_conversation(conversation_id)
-            if self.producer:
-                await self.producer.publish(
-                    topic=KafkaTopics.CONVERSATION_DELETED,
-                    key=str(conversation_id),
-                    value=payload
-                )
+        if success and self.cache:
+            await self.cache.delete_conversation(conversation_id)
         return success
 
     def list(self, user_id: UUID, limit: int = 20, cursor: Optional[datetime] = None) -> List[Conversation]:

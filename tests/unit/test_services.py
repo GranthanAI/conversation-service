@@ -14,7 +14,7 @@ sys.modules['asyncore'] = asyncore_mock
 # -------------------------------------------------------------
 
 import pytest
-from unittest.mock import MagicMock, AsyncMock, ANY
+from unittest.mock import MagicMock, AsyncMock, ANY, patch
 import uuid
 from datetime import datetime, timezone
 
@@ -113,7 +113,8 @@ async def test_message_service_send(mock_repos, mock_redis_client):
         status=MessageStatus.SENT
     )
     
-    msg = await service.send(conv_id, msg_id, "user", "Test content")
+    with patch.object(service, "simulate_generation_pipeline", return_value=None):
+        msg = await service.send(conv_id, msg_id, "user", "Test content")
     
     assert msg.message_id == msg_id
     mock_msg_repo.create_with_outbox.assert_called_once()

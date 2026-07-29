@@ -25,6 +25,7 @@ from app.db.kafka import kafka_manager
 from app.db.grpc import grpc_manager
 from app.api.router import api_router
 from app.events.consumers import start_kafka_consumer
+from app.workers.outbox_worker import start_outbox_worker
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -38,17 +39,23 @@ async def lifespan(app: FastAPI):
     await kafka_manager.initialize()
     await grpc_manager.initialize()
     
-    # Spawn background consumer task
+    # Spawn background consumer and outbox tasks
     app.state.kafka_consumer_task = asyncio.create_task(start_kafka_consumer())
+    app.state.outbox_worker_task = asyncio.create_task(start_outbox_worker())
     
     yield
     # 2. Shutdown phase
     logger.info("Shutting down FastAPI application lifespan context...")
     
-    # Cancel background consumer task
+    # Cancel tasks
     app.state.kafka_consumer_task.cancel()
+    app.state.outbox_worker_task.cancel()
     try:
-        await app.state.kafka_consumer_task
+        await asyncio.gather(
+            app.state.kafka_consumer_task,
+            app.state.outbox_worker_task,
+            return_exceptions=True
+        )
     except asyncio.CancelledError:
         pass
         

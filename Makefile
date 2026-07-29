@@ -1,4 +1,4 @@
-.PHONY: help setup infra schema dev test clean
+.PHONY: help setup infra schema dev test clean protos
 
 help:
 	@echo "========================================================================"
@@ -20,6 +20,11 @@ help:
 setup:
 	@python -c "import os, shutil; os.path.exists('.env') or shutil.copy('.env.example', '.env')"
 	uv pip install -r requirements.txt
+	$(MAKE) protos
+
+protos:
+	uv run python -m grpc_tools.protoc -Iprotos --python_out=app/events --grpc_python_out=app/events protos/generation.proto
+
 
 infra:
 	docker compose up -d
