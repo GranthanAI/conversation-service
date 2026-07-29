@@ -56,10 +56,11 @@ class GRPCGenerationClient:
                 stub = self.get_stub()
                 # Run with large overall timeout, but enforce chunk-level timeout of 60s
                 stream = stub.Generate(req, timeout=3600.0)
+                iterator = stream.__aiter__()
                 
                 while True:
                     try:
-                        chunk = await asyncio.wait_for(stream.__anext__(), timeout=60.0)
+                        chunk = await asyncio.wait_for(iterator.__anext__(), timeout=60.0)
                         first_byte_received = True
                         yield {
                             "conversation_id": str(conversation_id),
