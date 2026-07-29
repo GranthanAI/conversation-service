@@ -14,6 +14,7 @@ from app.services.cache_service import CacheService
 from app.services.conversation_service import ConversationService
 from app.services.message_service import MessageService
 from app.services.idempotency_service import IdempotencyService
+from app.services.stream_service import StreamService
 from app.clients.kafka_producer import KafkaProducerClient, kafka_producer_client
 from app.db.redis import redis_manager
 
@@ -84,3 +85,9 @@ def get_idempotency_service() -> IdempotencyService:
     Factory method injecting the centralized IdempotencyService.
     """
     return IdempotencyService(redis_client=redis_manager.client)
+
+def get_stream_service() -> StreamService:
+    """
+    Factory method injecting the StreamService.
+    """
+    return StreamService(redis_client=redis_manager.client)

@@ -5,6 +5,7 @@ Coordinates Cache-Aside caching, database operations, and direct Kafka event pub
 
 import json
 import uuid
+import asyncio
 from typing import List, Optional
 from datetime import datetime, timezone
 from uuid import UUID
@@ -71,6 +72,18 @@ class MessageService:
                 key=str(conversation_id),
                 value=payload
             )
+
+        # Trigger simulated LLM response in background if user sent the message
+        if sender == "user":
+            assistant_msg_id = uuid.uuid4()
+            self.repo.create_message_direct(
+                conversation_id=conversation_id,
+                message_id=assistant_msg_id,
+                sender="assistant",
+                content="",
+                status="pending"
+            )
+            asyncio.create_task(self.simulate_generation_pipeline(conversation_id, assistant_msg_id, content))
             
         return msg
 
@@ -159,6 +172,10 @@ class MessageService:
                 key=str(conversation_id),
                 value=payload
             )
+
+        # Trigger simulated LLM response in background
+        prompt_content = prompt_msg.content if prompt_msg else ""
+        asyncio.create_task(self.simulate_generation_pipeline(conversation_id, new_msg_id, prompt_content))
             
         return target_msg
 
@@ -199,3 +216,31 @@ class MessageService:
         )
         await self._invalidate_cache(conversation_id)
         return msg
+
+    async def simulate_generation_pipeline(self, conversation_id: UUID, message_id: UUID, prompt: str) -> None:
+        """
+        Simulates downstream LLM generation by typing out a response chunk-by-chunk,
+        publishing to Redis PubSub and finalising the message state in Cassandra.
+        """
+        # Wait a short moment to let SSE client connect
+        await asyncio.sleep(1.0)
+        
+        full_text = f"This is a simulated AI assistant streaming response for your prompt: '{prompt}'."
+        chunks = [full_text[i:i+4] for i in range(0, len(full_text), 4)]
+        
+        from app.services.stream_service import StreamService
+        stream_service = StreamService(redis_client=self.cache.redis if self.cache else None)
+        
+        for index, chunk in enumerate(chunks):
+            is_final = (index == len(chunks) - 1)
+            chunk_payload = {
+                "conversation_id": str(conversation_id),
+                "message_id": str(message_id),
+                "sender": "assistant",
+                "content": chunk,
+                "is_final": is_final
+            }
+            await stream_service.publish_token(conversation_id, chunk_payload)
+            await asyncio.sleep(0.05)
+            
+        await self.finalize_assistant_message(conversation_id, message_id, full_text)
