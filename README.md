@@ -134,7 +134,14 @@ The server will start listening at `http://localhost:8000`. You can inspect endp
 | `make infra` | Starts Cassandra, Redis, and Kafka in the background. |
 | `make schema` | Applies database tables to Cassandra. |
 | `make dev` | Launches FastAPI reload development server on port 8000. |
+| `make test-unit` | Runs the isolated Pytest unit tests suite. |
+| `make test-integration` | Runs the Docker services integration tests suite. |
+| `make test-api` | Runs the API controller / HTTP router tests suite. |
+| `make test-load` | Runs the 50-user concurrent async load runner scenario. |
+| `make test-all` | Runs the entire combined test suite altogether. |
 | `make clean` | Purges compiler output caches recursively. |
+| `make docker-build` | Builds the application release Docker container image. |
+| `make docker-run` | Runs the application container locally on port 8000. |
 | `make kafka-log-conv-created` | Streams the `conversation.created` Kafka topic. |
 | `make kafka-log-conv-updated` | Streams the `conversation.updated` Kafka topic. |
 | `make kafka-log-conv-deleted` | Streams the `conversation.deleted` Kafka topic. |

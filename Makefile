@@ -38,6 +38,27 @@ dev:
 test:
 	uv run python -m pytest tests/unit/
 
+test-unit:
+	uv run python -m pytest tests/unit/
+
+test-integration:
+	uv run python -m pytest tests/integration/
+
+test-api:
+	uv run python -m pytest tests/api/
+
+test-load:
+	uv run python -m tests.load.load_runner
+
+test-all:
+	uv run python -m pytest tests/
+
+docker-build:
+	docker build -t graphgpt-conversation-service:latest .
+
+docker-run:
+	docker run -p 8000:8000 --env-file .env graphgpt-conversation-service:latest
+
 clean:
 	@python -c "import shutil, glob; [shutil.rmtree(p, ignore_errors=True) for p in glob.glob('**/__pycache__', recursive=True)]"
 
@@ -52,4 +73,5 @@ kafka-log-conv-deleted:
 
 kafka-log-msg-created:
 	docker exec -it graphgpt-kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic chat.message.created --from-beginning
+
 

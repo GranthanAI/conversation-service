@@ -10,24 +10,26 @@ from app.core.logging import logger
 from app.repositories.outbox_repository import CassandraOutboxRepository
 from app.clients.kafka_producer import kafka_producer_client
 
+from app.core.config import settings
+
 async def start_retry_worker():
     """
-    Background worker loop that runs every 30 seconds.
-    Finds outbox events older than 30 seconds that are still unpublished,
+    Background worker loop that runs periodically.
+    Finds outbox events older than thresholds that are still unpublished,
     and retries publishing them to Kafka brokers.
     """
     logger.info("Starting background Outbox Retry Worker...")
     repo = CassandraOutboxRepository()
     
-    poll_interval_seconds = 30.0
-    stale_threshold_seconds = 30.0
+    poll_interval_seconds = settings.OUTBOX_RETRY_INTERVAL_SECONDS
+    stale_threshold_seconds = settings.OUTBOX_STALE_THRESHOLD_SECONDS
     
     try:
         while True:
             logger.info("Reconciliation loop running: scanning for stale outbox events...")
             now = datetime.now(timezone.utc)
             
-            for bucket in range(32):
+            for bucket in range(settings.OUTBOX_BUCKETS):
                 try:
                     unpublished_events = repo.fetch_unpublished(bucket, limit=100)
                     if not unpublished_events:

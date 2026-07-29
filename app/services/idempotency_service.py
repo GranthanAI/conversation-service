@@ -8,13 +8,15 @@ from typing import Optional, Dict, Any
 import redis.asyncio as aioredis
 from app.core.logging import logger
 
+from app.core.config import settings
+
 class IdempotencyService:
     """
     Manages client request idempotency locks and cached responses in Redis.
     """
     def __init__(self, redis_client: Optional[aioredis.Redis] = None):
         self.redis = redis_client
-        self.ttl = 86400  # 24 hours in seconds
+        self.ttl = settings.IDEMPOTENCY_TTL_SECONDS  # configured in settings
 
     def _get_key(self, key: str) -> str:
         return f"idempotency:{key}"

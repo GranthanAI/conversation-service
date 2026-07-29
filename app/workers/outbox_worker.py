@@ -10,19 +10,21 @@ from app.core.logging import logger
 from app.repositories.outbox_repository import CassandraOutboxRepository
 from app.clients.kafka_producer import kafka_producer_client
 
+from app.core.config import settings
+
 async def start_outbox_worker():
     """
-    Poller task looping across all 32 partition buckets every 250ms.
+    Poller task looping across all partition buckets.
     Reads unpublished events, attempts Kafka publishes, and updates status in Cassandra.
     """
     logger.info("Starting background Outbox Worker loop...")
     repo = CassandraOutboxRepository()
     
-    poll_interval_seconds = 0.25
+    poll_interval_seconds = settings.OUTBOX_POLL_INTERVAL_SECONDS
     
     try:
         while True:
-            for bucket in range(32):
+            for bucket in range(settings.OUTBOX_BUCKETS):
                 try:
                     unpublished_events = repo.fetch_unpublished(bucket, limit=200)
                     if not unpublished_events:

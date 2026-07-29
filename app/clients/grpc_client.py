@@ -9,6 +9,7 @@ from uuid import UUID
 import grpc
 
 from app.db.grpc import grpc_manager
+from app.core.config import settings
 from app.core.logging import logger
 from app.events.generation_pb2 import GenerationRequest, TokenChunk
 from app.events.generation_pb2_grpc import GenerationServiceStub
@@ -47,20 +48,20 @@ class GRPCGenerationClient:
             prompt_context=prompt_context
         )
 
-        attempts = 3
-        backoff = 1.0
+        attempts = settings.GRPC_RETRY_ATTEMPTS
+        backoff = settings.GRPC_RETRY_BACKOFF_BASE
         first_byte_received = False
         
         for attempt in range(attempts):
             try:
                 stub = self.get_stub()
-                # Run with large overall timeout, but enforce chunk-level timeout of 60s
-                stream = stub.Generate(req, timeout=3600.0)
+                # Run with large overall timeout, but enforce chunk-level timeout
+                stream = stub.Generate(req, timeout=settings.GRPC_STREAM_TIMEOUT_SECONDS)
                 iterator = stream.__aiter__()
                 
                 while True:
                     try:
-                        chunk = await asyncio.wait_for(iterator.__anext__(), timeout=60.0)
+                        chunk = await asyncio.wait_for(iterator.__anext__(), timeout=settings.GRPC_CHUNK_TIMEOUT_SECONDS)
                         first_byte_received = True
                         yield {
                             "conversation_id": str(conversation_id),
@@ -72,7 +73,7 @@ class GRPCGenerationClient:
                     except StopAsyncIteration:
                         break
                     except asyncio.TimeoutError:
-                        logger.error("gRPC stream chunk deadline exceeded (60s).")
+                        logger.error(f"gRPC stream chunk deadline exceeded ({settings.GRPC_CHUNK_TIMEOUT_SECONDS}s).")
                         raise grpc.RpcError("Stream chunk deadline exceeded")
                 # Successfully completed
                 return

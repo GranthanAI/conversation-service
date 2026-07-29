@@ -43,4 +43,19 @@ class Settings(BaseSettings):
     JWT_ISSUER: Optional[str] = None
     JWT_AUDIENCE: Optional[str] = None
 
+    # Outbox settings
+    OUTBOX_POLL_INTERVAL_SECONDS: float = 0.25
+    OUTBOX_RETRY_INTERVAL_SECONDS: float = 30.0
+    OUTBOX_STALE_THRESHOLD_SECONDS: float = 30.0
+    OUTBOX_BUCKETS: int = 32
+
+    # gRPC client settings
+    GRPC_RETRY_ATTEMPTS: int = 3
+    GRPC_RETRY_BACKOFF_BASE: float = 1.0
+    GRPC_CHUNK_TIMEOUT_SECONDS: float = 60.0
+    GRPC_STREAM_TIMEOUT_SECONDS: float = 3600.0
+
+    # Idempotency settings
+    IDEMPOTENCY_TTL_SECONDS: int = 86400
+
 settings = Settings()
