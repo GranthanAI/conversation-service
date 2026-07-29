@@ -47,7 +47,8 @@ class CacheService:
                     title=cached_data["title"],
                     created_at=datetime.fromisoformat(cached_data["created_at"]),
                     updated_at=datetime.fromisoformat(cached_data["updated_at"]),
-                    status=ConversationStatus(cached_data["status"])
+                    status=ConversationStatus(cached_data["status"]),
+                    parent_conversation_id=UUID(cached_data["parent_conversation_id"]) if cached_data.get("parent_conversation_id") else None
                 )
         except Exception as e:
             logger.warning("Failed to read conversation from Redis cache", error=str(e))
@@ -67,7 +68,8 @@ class CacheService:
                 "title": conv.title,
                 "created_at": conv.created_at.isoformat(),
                 "updated_at": conv.updated_at.isoformat(),
-                "status": conv.status.value
+                "status": conv.status.value,
+                "parent_conversation_id": str(conv.parent_conversation_id) if conv.parent_conversation_id else ""
             }
             await self.redis.hset(cache_key, mapping=mapping)
             await self.redis.expire(cache_key, settings.CACHE_TTL_SECONDS)

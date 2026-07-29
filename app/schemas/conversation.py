@@ -13,6 +13,7 @@ class CreateConversationRequest(BaseModel):
     Form model for conversation creation.
     """
     title: str = Field(..., description="Initial title for conversation catalog", min_length=1, max_length=255)
+    parent_conversation_id: Optional[UUID] = Field(None, description="Optional parent conversation UUID from which this conversation was branched")
 
     @field_validator("title")
     def validate_title(cls, v: str) -> str:
@@ -44,6 +45,7 @@ class ConversationResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     status: str
+    parent_conversation_id: Optional[UUID] = None
 
     model_config = {"from_attributes": True}
 

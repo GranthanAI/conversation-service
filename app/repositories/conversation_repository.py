@@ -36,7 +36,8 @@ class CassandraConversationRepository:
         status: str,
         event_id: UUID,
         event_type: str,
-        outbox_payload: str
+        outbox_payload: str,
+        parent_conversation_id: Optional[UUID] = None
     ) -> Conversation:
         """
         Atomic transactional write saving conversation data and outbox task inside a single LOGGED BATCH.
@@ -46,10 +47,10 @@ class CassandraConversationRepository:
         
         cql = """
             BEGIN BATCH
-                INSERT INTO conversations (conversation_id, user_id, title, created_at, updated_at, status)
-                VALUES (?, ?, ?, ?, ?, ?);
-                INSERT INTO conversations_by_user (user_id, updated_at, conversation_id, title, created_at, status)
-                VALUES (?, ?, ?, ?, ?, ?);
+                INSERT INTO conversations (conversation_id, user_id, title, created_at, updated_at, status, parent_conversation_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?);
+                INSERT INTO conversations_by_user (user_id, updated_at, conversation_id, title, created_at, status, parent_conversation_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?);
                 INSERT INTO transactional_outbox (bucket, event_id, event_type, payload, published, created_at)
                 VALUES (?, ?, ?, ?, ?, ?);
             APPLY BATCH;
@@ -57,8 +58,8 @@ class CassandraConversationRepository:
         stmt = self._get_prepared("create_conv_outbox", cql)
         
         self.manager.session.execute(stmt, (
-            conversation_id, user_id, title, now, now, status,
-            user_id, now, conversation_id, title, now, status,
+            conversation_id, user_id, title, now, now, status, parent_conversation_id,
+            user_id, now, conversation_id, title, now, status, parent_conversation_id,
             bucket, event_id, event_type, outbox_payload, False, now
         ))
         
@@ -68,7 +69,8 @@ class CassandraConversationRepository:
             title=title,
             created_at=now,
             updated_at=now,
-            status=ConversationStatus(status)
+            status=ConversationStatus(status),
+            parent_conversation_id=parent_conversation_id
         )
 
     def get(self, conversation_id: UUID) -> Optional[Conversation]:
@@ -76,7 +78,7 @@ class CassandraConversationRepository:
         Fetches conversation metadata by UUID.
         """
         cql = """
-            SELECT conversation_id, user_id, title, created_at, updated_at, status
+            SELECT conversation_id, user_id, title, created_at, updated_at, status, parent_conversation_id
             FROM conversations
             WHERE conversation_id = ?
         """
@@ -92,7 +94,8 @@ class CassandraConversationRepository:
             title=row.title,
             created_at=row.created_at,
             updated_at=row.updated_at,
-            status=ConversationStatus(row.status)
+            status=ConversationStatus(row.status),
+            parent_conversation_id=getattr(row, 'parent_conversation_id', None)
         )
 
     def update_with_outbox(
@@ -119,8 +122,8 @@ class CassandraConversationRepository:
                 DELETE FROM conversations_by_user
                 WHERE user_id = ? AND updated_at = ? AND conversation_id = ?;
                 
-                INSERT INTO conversations_by_user (user_id, updated_at, conversation_id, title, created_at, status)
-                VALUES (?, ?, ?, ?, ?, ?);
+                INSERT INTO conversations_by_user (user_id, updated_at, conversation_id, title, created_at, status, parent_conversation_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?);
                 
                 UPDATE conversations
                 SET title = ?, updated_at = ?, status = ?
@@ -134,7 +137,7 @@ class CassandraConversationRepository:
         
         self.manager.session.execute(stmt, (
             conv.user_id, conv.updated_at, conversation_id,
-            conv.user_id, new_updated_at, conversation_id, title, conv.created_at, status,
+            conv.user_id, new_updated_at, conversation_id, title, conv.created_at, status, conv.parent_conversation_id,
             title, new_updated_at, status, conversation_id,
             bucket, event_id, event_type, outbox_payload, False, new_updated_at
         ))
@@ -145,7 +148,8 @@ class CassandraConversationRepository:
             title=title,
             created_at=conv.created_at,
             updated_at=new_updated_at,
-            status=ConversationStatus(status)
+            status=ConversationStatus(status),
+            parent_conversation_id=conv.parent_conversation_id
         )
 
     def delete_with_outbox(
@@ -179,7 +183,7 @@ class CassandraConversationRepository:
         """
         if cursor:
             cql = """
-                SELECT conversation_id, title, created_at, updated_at, status
+                SELECT conversation_id, title, created_at, updated_at, status, parent_conversation_id
                 FROM conversations_by_user
                 WHERE user_id = ? AND updated_at < ?
                 LIMIT ?
@@ -188,7 +192,7 @@ class CassandraConversationRepository:
             rows = self.manager.session.execute(stmt, (user_id, cursor, limit))
         else:
             cql = """
-                SELECT conversation_id, title, created_at, updated_at, status
+                SELECT conversation_id, title, created_at, updated_at, status, parent_conversation_id
                 FROM conversations_by_user
                 WHERE user_id = ?
                 LIMIT ?
@@ -206,7 +210,8 @@ class CassandraConversationRepository:
                 title=row.title,
                 created_at=row.created_at,
                 updated_at=row.updated_at,
-                status=ConversationStatus(row.status)
+                status=ConversationStatus(row.status),
+                parent_conversation_id=getattr(row, 'parent_conversation_id', None)
             ))
         return conversations
 
@@ -224,8 +229,8 @@ class CassandraConversationRepository:
                 DELETE FROM conversations_by_user
                 WHERE user_id = ? AND updated_at = ? AND conversation_id = ?;
                 
-                INSERT INTO conversations_by_user (user_id, updated_at, conversation_id, title, created_at, status)
-                VALUES (?, ?, ?, ?, ?, ?);
+                INSERT INTO conversations_by_user (user_id, updated_at, conversation_id, title, created_at, status, parent_conversation_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?);
                 
                 UPDATE conversations
                 SET title = ?, updated_at = ?
@@ -235,7 +240,7 @@ class CassandraConversationRepository:
         stmt = self._get_prepared("update_conv_title_direct", cql)
         self.manager.session.execute(stmt, (
             conv.user_id, conv.updated_at, conversation_id,
-            conv.user_id, new_updated_at, conversation_id, title, conv.created_at, conv.status.value,
+            conv.user_id, new_updated_at, conversation_id, title, conv.created_at, conv.status.value, conv.parent_conversation_id,
             title, new_updated_at, conversation_id
         ))
         return True

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     created_at timestamp,
     updated_at timestamp,
     status text,
+    parent_conversation_id uuid,
     PRIMARY KEY (conversation_id)
 );
 
@@ -23,6 +24,7 @@ CREATE TABLE IF NOT EXISTS conversations_by_user (
     title text,
     created_at timestamp,
     status text,
+    parent_conversation_id uuid,
     PRIMARY KEY (user_id, updated_at, conversation_id)
 ) WITH CLUSTERING ORDER BY (updated_at DESC, conversation_id ASC);
 

@@ -8,6 +8,8 @@ from datetime import datetime
 from uuid import UUID
 from enum import Enum
 
+from typing import Optional
+
 class ConversationStatus(str, Enum):
     """
     Taxonomy codes matching active state lifecycle of conversations.
@@ -27,3 +29,4 @@ class Conversation:
     created_at: datetime
     updated_at: datetime
     status: ConversationStatus = ConversationStatus.ACTIVE
+    parent_conversation_id: Optional[UUID] = None

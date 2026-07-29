@@ -7,7 +7,7 @@ integrating Cache-Aside caching and direct Kafka event publishing.
 import json
 import uuid
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from app.repositories.conversation_repository import CassandraConversationRepository
@@ -46,19 +46,36 @@ class ConversationService:
             await self.cache.set_conversation(conv)
         return conv
 
-    async def create(self, user_id: UUID, title: str) -> Conversation:
+    async def create(self, user_id: UUID, title: str, parent_conversation_id: Optional[UUID] = None) -> Conversation:
         """
         Creates a conversation atomically alongside its outbox task,
         writes through to cache, and publishes directly to Kafka.
         """
+        # Validate parent lineage if specified
+        if parent_conversation_id:
+            parent_conv = await self.get(parent_conversation_id)
+            if not parent_conv:
+                raise LookupError("Parent conversation not found.")
+            if parent_conv.status != ConversationStatus.ACTIVE:
+                raise ValueError("Parent conversation is not active.")
+            if parent_conv.user_id != user_id:
+                raise PermissionError("Access to parent conversation denied.")
+
         conversation_id = uuidv7()
         event_id = uuid.uuid1()
+        now = datetime.now(timezone.utc)
         
         payload = {
+            "event_id": str(event_id),
+            "event_type": KafkaTopics.CONVERSATION_CREATED,
+            "event_version": 1,
             "conversation_id": str(conversation_id),
+            "parent_conversation_id": str(parent_conversation_id) if parent_conversation_id else None,
+            "conversation_status": "ACTIVE",
             "user_id": str(user_id),
-            "title": title,
-            "status": "active"
+            "created_at": now.isoformat(),
+            "trace_id": str(uuid.uuid4()),
+            "correlation_id": str(uuid.uuid4())
         }
         
         conv = self.repo.create_with_outbox(
@@ -68,7 +85,8 @@ class ConversationService:
             status="active",
             event_id=event_id,
             event_type=KafkaTopics.CONVERSATION_CREATED,
-            outbox_payload=json.dumps(payload)
+            outbox_payload=json.dumps(payload),
+            parent_conversation_id=parent_conversation_id
         )
         
         # Write-through update
