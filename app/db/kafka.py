@@ -33,9 +33,9 @@ class KafkaConnectionManager:
                     enable_idempotence=True,
                     value_serializer=lambda v: json.dumps(v).encode("utf-8"),
                     compression_type="gzip",
-                    linger_ms=5,
-                    max_batch_size=16384,
-                    max_request_size=1048576
+                    linger_ms=settings.KAFKA_LINGER_MS,
+                    max_batch_size=settings.KAFKA_MAX_BATCH_SIZE,
+                    max_request_size=settings.KAFKA_MAX_REQUEST_SIZE
                 )
                 await self.producer.start()
                 logger.info("Kafka Producer started successfully.")

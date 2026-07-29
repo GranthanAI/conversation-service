@@ -16,6 +16,7 @@ from app.events.topics import KafkaTopics
 from app.core.logging import logger
 from app.services.cache_service import CacheService
 from app.clients.kafka_producer import KafkaProducerClient
+from app.core.config import settings
 
 class MessageService:
     """
@@ -79,7 +80,7 @@ class MessageService:
             
         return msg
 
-    async def history(self, conversation_id: UUID, limit: int = 50, cursor: Optional[UUID] = None) -> List[Message]:
+    async def history(self, conversation_id: UUID, limit: int = settings.MESSAGE_HISTORY_DEFAULT_LIMIT, cursor: Optional[UUID] = None) -> List[Message]:
         """
         Returns message history page using Cache-Aside.
         """
@@ -110,7 +111,7 @@ class MessageService:
         """
         Soft-deletes the target assistant message and atomically stages regeneration event.
         """
-        history_msgs = self.repo.history(conversation_id, limit=50)
+        history_msgs = self.repo.history(conversation_id, limit=settings.CACHE_HISTORY_LIMIT)
         
         target_msg = None
         prompt_msg = None

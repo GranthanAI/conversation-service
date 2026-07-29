@@ -26,8 +26,8 @@ class GRPCClientManager:
             
             # Configure keepalive parameters as per LLD §12
             options = [
-                ('grpc.keepalive_time_ms', 20000),          # Ping every 20s
-                ('grpc.keepalive_timeout_ms', 10000),       # 10s ping timeout
+                ('grpc.keepalive_time_ms', settings.GRPC_KEEPALIVE_TIME_MS),          # configured keepalive
+                ('grpc.keepalive_timeout_ms', settings.GRPC_KEEPALIVE_TIMEOUT_MS),       # configured timeout
                 ('grpc.keepalive_permit_without_calls', 1), # Allow keepalive without active streams
                 ('grpc.http2.max_pings_without_data', 0)    # Unbounded pings
             ]

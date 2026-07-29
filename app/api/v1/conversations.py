@@ -23,6 +23,7 @@ from app.schemas.conversation import (
     ConversationListResponse
 )
 from app.utils.pagination import encode_cursor, decode_cursor
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -40,7 +41,7 @@ async def create_conversation(
 
 @router.get("", response_model=ConversationListResponse, status_code=status.HTTP_200_OK, summary="List user conversations")
 async def list_conversations(
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(settings.CONVERSATION_LIST_DEFAULT_LIMIT, ge=settings.CONVERSATION_LIST_MIN_LIMIT, le=settings.CONVERSATION_LIST_MAX_LIMIT),
     cursor: Optional[str] = Query(None),
     current_user: CurrentUser = Depends(get_current_user),
     service: ConversationService = Depends(get_conversation_service)

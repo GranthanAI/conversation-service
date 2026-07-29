@@ -87,7 +87,7 @@ async def start_summary_worker():
                 
             except Exception as e:
                 logger.error("Error in Summary Worker processing message. Retrying...", error=str(e))
-                await asyncio.sleep(1)
+                await asyncio.sleep(settings.SUMMARY_WORKER_ERROR_SLEEP_SECONDS)
                 
     except asyncio.CancelledError:
         logger.info("Summary Worker background loop shutdown signal received.")

@@ -24,7 +24,8 @@ class RedisClientManager:
             self.client = aioredis.from_url(
                 settings.REDIS_URL,
                 decode_responses=True,
-                socket_timeout=settings.REDIS_TIMEOUT_SECONDS
+                socket_timeout=settings.REDIS_TIMEOUT_SECONDS,
+                max_connections=settings.REDIS_MAX_CONNECTIONS
             )
             logger.info("Redis client pool initialized.")
         except Exception as e:

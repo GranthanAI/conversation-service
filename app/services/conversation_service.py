@@ -16,6 +16,7 @@ from app.events.topics import KafkaTopics
 from app.utils.helpers import uuidv7
 from app.services.cache_service import CacheService
 from app.clients.kafka_producer import KafkaProducerClient
+from app.core.config import settings
 
 class ConversationService:
     """
@@ -161,7 +162,7 @@ class ConversationService:
             await self.cache.delete_conversation(conversation_id)
         return success
 
-    def list(self, user_id: UUID, limit: int = 20, cursor: Optional[datetime] = None) -> List[Conversation]:
+    def list(self, user_id: UUID, limit: int = settings.CONVERSATION_LIST_DEFAULT_LIMIT, cursor: Optional[datetime] = None) -> List[Conversation]:
         """
         Lists user conversations.
         """

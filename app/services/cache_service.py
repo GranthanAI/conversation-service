@@ -13,6 +13,7 @@ import redis.asyncio as aioredis
 from app.models.conversation import Conversation, ConversationStatus
 from app.models.message import Message, MessageStatus
 from app.core.logging import logger
+from app.core.config import settings
 
 class CacheService:
     """
@@ -69,7 +70,7 @@ class CacheService:
                 "status": conv.status.value
             }
             await self.redis.hset(cache_key, mapping=mapping)
-            await self.redis.expire(cache_key, 3600)
+            await self.redis.expire(cache_key, settings.CACHE_TTL_SECONDS)
         except Exception as e:
             logger.warning("Failed to write conversation to Redis cache", error=str(e))
 
@@ -87,7 +88,7 @@ class CacheService:
 
     # --- Message List Cache Operations ---
 
-    async def get_last_50_messages(self, conversation_id: UUID, limit: int = 50) -> Optional[List[Message]]:
+    async def get_last_50_messages(self, conversation_id: UUID, limit: int = settings.CACHE_HISTORY_LIMIT) -> Optional[List[Message]]:
         """
         Reads message history list from Redis List.
         """
@@ -135,7 +136,7 @@ class CacheService:
             # Cap list length implicitly or overwrite
             await self.redis.delete(cache_key)
             await self.redis.rpush(cache_key, *serialized_msgs)
-            await self.redis.expire(cache_key, 3600)
+            await self.redis.expire(cache_key, settings.CACHE_TTL_SECONDS)
         except Exception as e:
             logger.warning("Failed to write messages to Redis cache", error=str(e))
 

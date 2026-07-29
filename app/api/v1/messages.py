@@ -25,6 +25,7 @@ from app.schemas.message import (
 )
 from app.utils.helpers import uuidv7
 from app.utils.pagination import encode_cursor, decode_cursor
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -98,7 +99,7 @@ async def create_message(
 @router.get("/{conversation_id}/messages", response_model=MessageListResponse, status_code=status.HTTP_200_OK, summary="Get conversation message history")
 async def get_message_history(
     conversation_id: UUID,
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(settings.MESSAGE_HISTORY_DEFAULT_LIMIT, ge=settings.MESSAGE_HISTORY_MIN_LIMIT, le=settings.MESSAGE_HISTORY_MAX_LIMIT),
     cursor: Optional[str] = Query(None),
     conv: Conversation = Depends(require_conversation_owner),
     service: MessageService = Depends(get_message_service)

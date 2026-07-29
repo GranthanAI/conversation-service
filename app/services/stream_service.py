@@ -37,7 +37,7 @@ class StreamService:
             return
         key = self._get_ownership_key(conversation_id)
         try:
-            await self.redis.set(key, self.pod_id, ex=60)
+            await self.redis.set(key, self.pod_id, ex=settings.STREAM_OWNERSHIP_TTL_SECONDS)
             logger.info("SSE Stream ownership claimed", conversation_id=str(conversation_id), pod_id=self.pod_id)
         except Exception as e:
             logger.warning("Failed to claim stream ownership in Redis", conversation_id=str(conversation_id), error=str(e))
@@ -50,7 +50,7 @@ class StreamService:
             return
         key = self._get_ownership_key(conversation_id)
         try:
-            await self.redis.expire(key, 60)
+            await self.redis.expire(key, settings.STREAM_OWNERSHIP_TTL_SECONDS)
         except Exception as e:
             logger.warning("Failed to renew stream ownership TTL in Redis", conversation_id=str(conversation_id), error=str(e))
 
@@ -102,7 +102,7 @@ class StreamService:
         async def heartbeat_loop():
             try:
                 while True:
-                    await asyncio.sleep(20)
+                    await asyncio.sleep(settings.STREAM_HEARTBEAT_INTERVAL_SECONDS)
                     await self.renew_ownership(conversation_id)
             except asyncio.CancelledError:
                 pass
@@ -116,7 +116,7 @@ class StreamService:
             while True:
                 try:
                     # Non-blocking check for new messages
-                    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=settings.STREAM_PUBSUB_TIMEOUT_SECONDS)
                     if msg:
                         data_str = msg["data"]
                         if isinstance(data_str, bytes):
@@ -138,7 +138,7 @@ class StreamService:
                     raise
                 except Exception as e:
                     logger.warning("Error reading from Redis PubSub channel", channel=channel_name, error=str(e))
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(settings.STREAM_ERROR_SLEEP_SECONDS)
         finally:
             # Cleanup
             hb_task.cancel()

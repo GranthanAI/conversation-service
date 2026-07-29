@@ -58,4 +58,37 @@ class Settings(BaseSettings):
     # Idempotency settings
     IDEMPOTENCY_TTL_SECONDS: int = 86400
 
+    # Redis pool settings
+    REDIS_MAX_CONNECTIONS: int = 100
+
+    # Kafka producer performance settings
+    KAFKA_LINGER_MS: int = 5
+    KAFKA_MAX_BATCH_SIZE: int = 16384
+    KAFKA_MAX_REQUEST_SIZE: int = 1048576
+
+    # gRPC Connection Keepalives
+    GRPC_KEEPALIVE_TIME_MS: int = 20000
+    GRPC_KEEPALIVE_TIMEOUT_MS: int = 10000
+
+    # Stream & PubSub loop configs
+    STREAM_OWNERSHIP_TTL_SECONDS: int = 60
+    STREAM_HEARTBEAT_INTERVAL_SECONDS: float = 20.0
+    STREAM_PUBSUB_TIMEOUT_SECONDS: float = 1.0
+    STREAM_ERROR_SLEEP_SECONDS: float = 0.5
+
+    # Cache TTL configuration
+    CACHE_TTL_SECONDS: int = 3600
+
+    # Worker configuration
+    SUMMARY_WORKER_ERROR_SLEEP_SECONDS: float = 1.0
+
+    # Route limits & defaults
+    CONVERSATION_LIST_DEFAULT_LIMIT: int = 20
+    CONVERSATION_LIST_MIN_LIMIT: int = 1
+    CONVERSATION_LIST_MAX_LIMIT: int = 100
+    MESSAGE_HISTORY_DEFAULT_LIMIT: int = 50
+    MESSAGE_HISTORY_MIN_LIMIT: int = 1
+    MESSAGE_HISTORY_MAX_LIMIT: int = 100
+    CACHE_HISTORY_LIMIT: int = 50
+
 settings = Settings()
