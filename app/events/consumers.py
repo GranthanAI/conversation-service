@@ -87,12 +87,6 @@ async def start_kafka_consumer():
                     await msg_service.finalize_assistant_message(conversation_id, message_id, full_content)
                     logger.info("Processed assistant message completion from Kafka", message_id=str(message_id))
 
-                elif msg.topic == KafkaTopics.SUMMARY_GENERATED:
-                    conversation_id = UUID(inner_payload["conversation_id"])
-                    summary = inner_payload["summary"]
-                    await msg_service.attach_summary(conversation_id, summary)
-                    logger.info("Processed conversation summary attachment from Kafka", conversation_id=str(conversation_id))
-
                 # 4. Mark processed in inbox
                 inbox_repo.save(event_id)
 

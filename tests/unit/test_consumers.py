@@ -150,60 +150,6 @@ async def test_consumer_loop_processes_response_completed(
     mock_inbox_repo.save.assert_called_once_with(event_id)
     assert mock_consumer.committed is True
 
-@pytest.mark.anyio
-@patch("app.events.consumers.CassandraInboxRepository")
-@patch("app.events.consumers.CassandraConversationRepository")
-@patch("app.events.consumers.CassandraMessageRepository")
-@patch("app.events.consumers.CacheService")
-@patch("app.events.consumers.kafka_manager")
-async def test_consumer_loop_processes_summary_generated(
-    mock_kafka_manager_class,
-    mock_cache_service_class,
-    mock_msg_repo_class,
-    mock_conv_repo_class,
-    mock_inbox_repo_class
-):
-    mock_inbox_repo = MagicMock()
-    mock_inbox_repo.exists.return_value = False
-    mock_inbox_repo_class.return_value = mock_inbox_repo
-
-    mock_conv_repo = MagicMock()
-    mock_conv_repo_class.return_value = mock_conv_repo
-
-    mock_msg_repo = MagicMock()
-    mock_msg_repo.create_message_direct.return_value = MagicMock()
-    mock_msg_repo_class.return_value = mock_msg_repo
-
-    mock_cache_service = AsyncMock()
-    mock_cache_service_class.return_value = mock_cache_service
-
-    event_id = uuid.uuid4()
-    conv_id = uuid.uuid4()
-    
-    event_payload = {
-        "event_id": str(event_id),
-        "event_type": KafkaTopics.SUMMARY_GENERATED,
-        "payload": {
-            "conversation_id": str(conv_id),
-            "summary": "This is a summary"
-        }
-    }
-    
-    mock_msg = MockKafkaMessage(
-        topic=KafkaTopics.SUMMARY_GENERATED,
-        value=event_payload
-    )
-    
-    mock_consumer = MockConsumer(mock_msg)
-    mock_kafka_manager_class.consumer = mock_consumer
-
-    await start_kafka_consumer()
-
-    mock_inbox_repo.exists.assert_called_once_with(event_id)
-    mock_msg_repo.create_message_direct.assert_called_once()
-    mock_cache_service.delete_last_50_messages.assert_called_once_with(conv_id)
-    mock_inbox_repo.save.assert_called_once_with(event_id)
-    assert mock_consumer.committed is True
 
 @pytest.mark.anyio
 @patch("app.events.consumers.CassandraInboxRepository")

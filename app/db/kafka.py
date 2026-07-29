@@ -51,7 +51,6 @@ class KafkaConnectionManager:
                         group=settings.KAFKA_CONSUMER_GROUP)
             try:
                 self.consumer = AIOKafkaConsumer(
-                    KafkaTopics.SUMMARY_GENERATED,
                     KafkaTopics.TITLE_GENERATED,
                     KafkaTopics.CHAT_RESPONSE_COMPLETED,
                     bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,

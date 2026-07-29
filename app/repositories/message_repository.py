@@ -152,3 +152,15 @@ class CassandraMessageRepository:
             created_at=now,
             status=MessageStatus(status)
         )
+
+    def delete_all_for_conversation(self, conversation_id: UUID) -> bool:
+        """
+        Hard-deletes all messages in a conversation partition.
+        """
+        cql = """
+            DELETE FROM messages_by_conversation
+            WHERE conversation_id = ?
+        """
+        stmt = self._get_prepared("delete_all_msg_for_conv", cql)
+        self.manager.session.execute(stmt, (conversation_id,))
+        return True

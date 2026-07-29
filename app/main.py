@@ -26,11 +26,14 @@ from app.db.grpc import grpc_manager
 from app.api.router import api_router
 from app.events.consumers import start_kafka_consumer
 from app.workers.outbox_worker import start_outbox_worker
+from app.workers.cleanup_worker import start_cleanup_worker
+from app.workers.retry_worker import start_retry_worker
+from app.workers.summary_worker import start_summary_worker
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Context manager managing start and shutdown lifecycles of database clients.
+    Context manager managing start and shutdown lifecycles of database clients and workers.
     """
     # 1. Startup phase
     logger.info("Starting up FastAPI application lifespan context...")
@@ -42,6 +45,9 @@ async def lifespan(app: FastAPI):
     # Spawn background consumer and outbox tasks
     app.state.kafka_consumer_task = asyncio.create_task(start_kafka_consumer())
     app.state.outbox_worker_task = asyncio.create_task(start_outbox_worker())
+    app.state.cleanup_worker_task = asyncio.create_task(start_cleanup_worker())
+    app.state.retry_worker_task = asyncio.create_task(start_retry_worker())
+    app.state.summary_worker_task = asyncio.create_task(start_summary_worker())
     
     yield
     # 2. Shutdown phase
@@ -50,10 +56,16 @@ async def lifespan(app: FastAPI):
     # Cancel tasks
     app.state.kafka_consumer_task.cancel()
     app.state.outbox_worker_task.cancel()
+    app.state.cleanup_worker_task.cancel()
+    app.state.retry_worker_task.cancel()
+    app.state.summary_worker_task.cancel()
     try:
         await asyncio.gather(
             app.state.kafka_consumer_task,
             app.state.outbox_worker_task,
+            app.state.cleanup_worker_task,
+            app.state.retry_worker_task,
+            app.state.summary_worker_task,
             return_exceptions=True
         )
     except asyncio.CancelledError:

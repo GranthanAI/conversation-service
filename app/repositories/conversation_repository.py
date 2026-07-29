@@ -239,3 +239,27 @@ class CassandraConversationRepository:
             title, new_updated_at, conversation_id
         ))
         return True
+
+    def hard_delete(self, conversation_id: UUID) -> bool:
+        """
+        Permanently deletes a conversation from both conversations and conversations_by_user tables.
+        """
+        conv = self.get(conversation_id)
+        if not conv:
+            return False
+            
+        cql = """
+            BEGIN BATCH
+                DELETE FROM conversations_by_user
+                WHERE user_id = ? AND updated_at = ? AND conversation_id = ?;
+                
+                DELETE FROM conversations
+                WHERE conversation_id = ?;
+            APPLY BATCH;
+        """
+        stmt = self._get_prepared("hard_delete_conv", cql)
+        self.manager.session.execute(stmt, (
+            conv.user_id, conv.updated_at, conversation_id,
+            conversation_id
+        ))
+        return True
