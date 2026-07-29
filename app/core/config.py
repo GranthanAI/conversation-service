@@ -91,4 +91,9 @@ class Settings(BaseSettings):
     MESSAGE_HISTORY_MAX_LIMIT: int = 100
     CACHE_HISTORY_LIMIT: int = 50
 
+    # Distributed Outbox lock settings
+    OUTBOX_LOCK_TTL_SECONDS: float = 10.0
+    OUTBOX_LOCK_RENEW_INTERVAL_SECONDS: float = 3.0
+    OUTBOX_WORKER_CONCURRENCY: int = 8
+
 settings = Settings()
