@@ -29,6 +29,7 @@ from app.workers.outbox_worker import start_outbox_worker
 from app.workers.cleanup_worker import start_cleanup_worker
 from app.workers.retry_worker import start_retry_worker
 from app.workers.summary_worker import start_summary_worker
+from app.middleware.correlation import CorrelationIDMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -83,8 +84,12 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Middleware: Correlation ID must be first so all downstream code can read it
+app.add_middleware(CorrelationIDMiddleware)
+
 # Mount central API routing prefixes
 app.include_router(api_router, prefix="/v1")
+
 
 # Global health check redirects for standard paths
 @app.get("/live", status_code=status.HTTP_200_OK, tags=["Health Checks"])

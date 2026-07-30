@@ -76,7 +76,8 @@ async def create_message(
             conversation_id=conversation_id,
             message_id=message_id,
             sender="user",
-            content=payload.content
+            content=payload.content,
+            user_id=conv.user_id,
         )
     except Exception as e:
         if x_idempotency_key:

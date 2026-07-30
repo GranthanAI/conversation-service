@@ -13,6 +13,7 @@ from uuid import UUID
 from app.repositories.message_repository import CassandraMessageRepository
 from app.models.message import Message, MessageStatus
 from app.events.topics import KafkaTopics
+from app.events.producers import build_event_envelope
 from app.core.logging import logger
 from app.services.cache_service import CacheService
 from app.clients.kafka_producer import KafkaProducerClient
@@ -39,19 +40,32 @@ class MessageService:
         if self.cache:
             await self.cache.delete_last_50_messages(conversation_id)
 
-    async def send(self, conversation_id: UUID, message_id: UUID, sender: str, content: str) -> Message:
+    async def send(
+        self,
+        conversation_id: UUID,
+        message_id: UUID,
+        sender: str,
+        content: str,
+        user_id: Optional[UUID] = None,
+    ) -> Message:
         """
         Persists a message atomically, updates cache, and stages outbox task.
+        'sender' is stored internally; 'role' is the canonical Kafka field name.
         """
         event_id = uuid.uuid1()
-        payload = {
-            "conversation_id": str(conversation_id),
-            "message_id": str(message_id),
-            "sender": sender,
-            "content": content,
-            "status": "sent"
-        }
-        
+        envelope = build_event_envelope(
+            event_type=KafkaTopics.CHAT_MESSAGE_CREATED,
+            payload={
+                "conversation_id": str(conversation_id),
+                "message_id":      str(message_id),
+                "role":            sender,   # canonical field name for consumers
+                "content":         content,
+                "user_id":         str(user_id) if user_id else None,
+            },
+            causation_id=str(event_id),
+        )
+        envelope["event_id"] = str(event_id)
+
         msg = self.repo.create_with_outbox(
             conversation_id=conversation_id,
             message_id=message_id,
@@ -60,9 +74,9 @@ class MessageService:
             status="sent",
             event_id=event_id,
             event_type=KafkaTopics.CHAT_MESSAGE_CREATED,
-            outbox_payload=json.dumps(payload)
+            outbox_payload=json.dumps(envelope)
         )
-        
+
         # Invalidate history cache
         await self._invalidate_cache(conversation_id)
 
@@ -77,7 +91,7 @@ class MessageService:
                 status="pending"
             )
             asyncio.create_task(self.simulate_generation_pipeline(conversation_id, assistant_msg_id, content))
-            
+
         return msg
 
     async def history(self, conversation_id: UUID, limit: int = settings.MESSAGE_HISTORY_DEFAULT_LIMIT, cursor: Optional[UUID] = None) -> List[Message]:
@@ -128,16 +142,20 @@ class MessageService:
 
         # Calculate outbox params for new assistant streaming response
         event_id = uuid.uuid1()
-        new_msg_id = uuid.uuid1() # generate a new response task ID
-        
-        payload = {
-            "conversation_id": str(conversation_id),
-            "message_id": str(new_msg_id),
-            "sender": "assistant",
-            "content": "",
-            "prompt_content": prompt_msg.content if prompt_msg else "",
-            "status": "pending"
-        }
+        new_msg_id = uuid.uuid1()  # generate a new response task ID
+
+        envelope = build_event_envelope(
+            event_type=KafkaTopics.CHAT_MESSAGE_CREATED,
+            payload={
+                "conversation_id": str(conversation_id),
+                "message_id":      str(new_msg_id),
+                "role":            "assistant",
+                "content":         "",
+                "prompt_content":  prompt_msg.content if prompt_msg else "",
+            },
+            causation_id=str(event_id),
+        )
+        envelope["event_id"] = str(event_id)
 
         # Stage regeneration atomically by soft deleting the old response and executing batch outbox stage
         if target_msg.sender == "assistant":
@@ -153,7 +171,7 @@ class MessageService:
             status="pending",
             event_id=event_id,
             event_type=KafkaTopics.CHAT_MESSAGE_CREATED,
-            outbox_payload=json.dumps(payload)
+            outbox_payload=json.dumps(envelope)
         )
 
         await self._invalidate_cache(conversation_id)

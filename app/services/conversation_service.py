@@ -13,6 +13,7 @@ from uuid import UUID
 from app.repositories.conversation_repository import CassandraConversationRepository
 from app.models.conversation import Conversation, ConversationStatus
 from app.events.topics import KafkaTopics
+from app.events.producers import build_event_envelope
 from app.utils.helpers import uuidv7
 from app.services.cache_service import CacheService
 from app.clients.kafka_producer import KafkaProducerClient
@@ -64,20 +65,22 @@ class ConversationService:
         conversation_id = uuidv7()
         event_id = uuid.uuid1()
         now = datetime.now(timezone.utc)
-        
-        payload = {
-            "event_id": str(event_id),
-            "event_type": KafkaTopics.CONVERSATION_CREATED,
-            "event_version": 1,
-            "conversation_id": str(conversation_id),
-            "parent_conversation_id": str(parent_conversation_id) if parent_conversation_id else None,
-            "conversation_status": "ACTIVE",
-            "user_id": str(user_id),
-            "created_at": now.isoformat(),
-            "trace_id": str(uuid.uuid4()),
-            "correlation_id": str(uuid.uuid4())
-        }
-        
+
+        envelope = build_event_envelope(
+            event_type=KafkaTopics.CONVERSATION_CREATED,
+            payload={
+                "conversation_id":        str(conversation_id),
+                "user_id":                str(user_id),
+                "title":                  title,
+                "status":                 "ACTIVE",
+                "parent_conversation_id": str(parent_conversation_id) if parent_conversation_id else None,
+                "created_at":             now.isoformat(),
+            },
+            causation_id=str(event_id),
+        )
+        # Overwrite event_id so it matches the one we store in Cassandra
+        envelope["event_id"] = str(event_id)
+
         conv = self.repo.create_with_outbox(
             conversation_id=conversation_id,
             user_id=user_id,
@@ -85,7 +88,7 @@ class ConversationService:
             status="active",
             event_id=event_id,
             event_type=KafkaTopics.CONVERSATION_CREATED,
-            outbox_payload=json.dumps(payload),
+            outbox_payload=json.dumps(envelope),
             parent_conversation_id=parent_conversation_id
         )
         
@@ -104,20 +107,25 @@ class ConversationService:
             return None
 
         event_id = uuid.uuid1()
-        payload = {
-            "conversation_id": str(conversation_id),
-            "user_id": str(conv.user_id),
-            "title": new_title,
-            "status": conv.status.value
-        }
-        
+        envelope = build_event_envelope(
+            event_type=KafkaTopics.CONVERSATION_UPDATED,
+            payload={
+                "conversation_id": str(conversation_id),
+                "user_id":         str(conv.user_id),
+                "title":           new_title,
+                "status":          conv.status.value,
+            },
+            causation_id=str(event_id),
+        )
+        envelope["event_id"] = str(event_id)
+
         updated = self.repo.update_with_outbox(
             conversation_id=conversation_id,
             title=new_title,
             status=conv.status,
             event_id=event_id,
             event_type=KafkaTopics.CONVERSATION_UPDATED,
-            outbox_payload=json.dumps(payload)
+            outbox_payload=json.dumps(envelope)
         )
         
         if updated and self.cache:
@@ -133,20 +141,25 @@ class ConversationService:
             return None
 
         event_id = uuid.uuid1()
-        payload = {
-            "conversation_id": str(conversation_id),
-            "user_id": str(conv.user_id),
-            "title": conv.title,
-            "status": "archived"
-        }
-        
+        envelope = build_event_envelope(
+            event_type=KafkaTopics.CONVERSATION_UPDATED,
+            payload={
+                "conversation_id": str(conversation_id),
+                "user_id":         str(conv.user_id),
+                "title":           conv.title,
+                "status":          "archived",
+            },
+            causation_id=str(event_id),
+        )
+        envelope["event_id"] = str(event_id)
+
         archived = self.repo.update_with_outbox(
             conversation_id=conversation_id,
             title=conv.title,
             status="archived",
             event_id=event_id,
             event_type=KafkaTopics.CONVERSATION_UPDATED,
-            outbox_payload=json.dumps(payload)
+            outbox_payload=json.dumps(envelope)
         )
         
         if archived and self.cache:
@@ -162,18 +175,23 @@ class ConversationService:
             return False
 
         event_id = uuid.uuid1()
-        payload = {
-            "conversation_id": str(conversation_id),
-            "user_id": str(conv.user_id),
-            "title": conv.title,
-            "status": "deleted"
-        }
-        
+        envelope = build_event_envelope(
+            event_type=KafkaTopics.CONVERSATION_DELETED,
+            payload={
+                "conversation_id": str(conversation_id),
+                "user_id":         str(conv.user_id),
+                "title":           conv.title,
+                "status":          "deleted",
+            },
+            causation_id=str(event_id),
+        )
+        envelope["event_id"] = str(event_id)
+
         success = self.repo.delete_with_outbox(
             conversation_id=conversation_id,
             event_id=event_id,
             event_type=KafkaTopics.CONVERSATION_DELETED,
-            outbox_payload=json.dumps(payload)
+            outbox_payload=json.dumps(envelope)
         )
         
         if success and self.cache:
