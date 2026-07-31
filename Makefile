@@ -33,7 +33,7 @@ schema:
 	@python -c "import subprocess, time, sys; print('Waiting for Cassandra CQL port 9042 to accept connections...'); [sys.exit(subprocess.run(['docker', 'exec', '-i', 'graphgpt-cassandra', 'cqlsh'], stdin=open('app/db/schema.cql')).returncode) if subprocess.run(['docker', 'exec', '-i', 'graphgpt-cassandra', 'cqlsh', '-e', 'DESCRIBE KEYSPACES'], capture_output=True).returncode == 0 else time.sleep(2) for _ in range(30)]; print('Error: Cassandra timed out after 60s.'); sys.exit(1)"
 
 dev:
-	uv run uvicorn app.main:app --reload
+	uv run uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
 
 test:
 	uv run python -m pytest tests/unit/
