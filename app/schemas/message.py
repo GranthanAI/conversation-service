@@ -13,6 +13,9 @@ class CreateMessageRequest(BaseModel):
     Form model for message creation.
     """
     content: str = Field(..., description="Message text content", min_length=1, max_length=8000)
+    mode: Optional[str] = Field(None, description="Requested generation mode, e.g. 'smart', 'default'")
+    selected_tools: Optional[List[str]] = Field(None, description="Explicitly selected optional tools")
+    file_ids: Optional[List[str]] = Field(None, description="Attached file IDs for Ask Files mode")
 
     @field_validator("content")
     def validate_content(cls, v: str) -> str:

@@ -34,9 +34,6 @@ class Settings(BaseSettings):
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
     KAFKA_CONSUMER_GROUP: str = "conversation-service.chat-events.v1"
 
-    # gRPC settings
-    LLM_SERVICE_GRPC_ENDPOINT: str = "localhost:50051"
-
     # JWT Configs
     JWT_SECRET_KEY: str = "supersecretjwtkeyforauthservicelocaldvelopment12345"
     JWT_ALGORITHM: str = "HS256"
@@ -49,12 +46,6 @@ class Settings(BaseSettings):
     OUTBOX_STALE_THRESHOLD_SECONDS: float = 30.0
     OUTBOX_BUCKETS: int = 32
 
-    # gRPC client settings
-    GRPC_RETRY_ATTEMPTS: int = 3
-    GRPC_RETRY_BACKOFF_BASE: float = 1.0
-    GRPC_CHUNK_TIMEOUT_SECONDS: float = 60.0
-    GRPC_STREAM_TIMEOUT_SECONDS: float = 3600.0
-
     # Idempotency settings
     IDEMPOTENCY_TTL_SECONDS: int = 86400
 
@@ -65,10 +56,6 @@ class Settings(BaseSettings):
     KAFKA_LINGER_MS: int = 5
     KAFKA_MAX_BATCH_SIZE: int = 16384
     KAFKA_MAX_REQUEST_SIZE: int = 1048576
-
-    # gRPC Connection Keepalives
-    GRPC_KEEPALIVE_TIME_MS: int = 20000
-    GRPC_KEEPALIVE_TIMEOUT_MS: int = 10000
 
     # Stream & PubSub loop configs
     STREAM_OWNERSHIP_TTL_SECONDS: int = 60
@@ -95,5 +82,9 @@ class Settings(BaseSettings):
     OUTBOX_LOCK_TTL_SECONDS: float = 10.0
     OUTBOX_LOCK_RENEW_INTERVAL_SECONDS: float = 3.0
     OUTBOX_WORKER_CONCURRENCY: int = 8
+
+    # Pending Response Timeout settings (llm-service Kafka round-trip watchdog)
+    PENDING_RESPONSE_TIMEOUT_SECONDS: int = 120
+    PENDING_TIMEOUT_WORKER_POLL_INTERVAL_SECONDS: float = 5.0
 
 settings = Settings()

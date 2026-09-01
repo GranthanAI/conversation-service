@@ -17,6 +17,7 @@ dependencies = [
     "structlog",
     "pyjwt",
     "cryptography",
+    "cramjam>=2.12.1",
 ]
 
 [dependency-groups]

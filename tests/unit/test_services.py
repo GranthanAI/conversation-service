@@ -113,9 +113,8 @@ async def test_message_service_send(mock_repos, mock_redis_client):
         status=MessageStatus.SENT
     )
     
-    with patch.object(service, "simulate_generation_pipeline", return_value=None):
-        msg = await service.send(conv_id, msg_id, "user", "Test content")
-    
+    msg = await service.send(conv_id, msg_id, "user", "Test content")
+
     assert msg.message_id == msg_id
     mock_msg_repo.create_with_outbox.assert_called_once()
     mock_redis_client.delete.assert_called_once_with(f"conversation:{conv_id}:last50")
