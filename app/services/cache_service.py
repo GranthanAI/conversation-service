@@ -110,7 +110,8 @@ class CacheService:
                         sender=data["sender"],
                         content=data["content"],
                         created_at=datetime.fromisoformat(data["created_at"]),
-                        status=MessageStatus(data["status"])
+                        status=MessageStatus(data["status"]),
+                        file_ids=[UUID(fid) for fid in data.get("file_ids", [])]
                     ))
                 return messages
         except Exception as e:
@@ -133,7 +134,8 @@ class CacheService:
                     "sender": m.sender,
                     "content": m.content,
                     "created_at": m.created_at.isoformat(),
-                    "status": m.status.value
+                    "status": m.status.value,
+                    "file_ids": [str(fid) for fid in m.file_ids]
                 }))
             # Cap list length implicitly or overwrite
             await self.redis.delete(cache_key)

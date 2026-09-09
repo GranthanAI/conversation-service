@@ -47,13 +47,15 @@ class MessageService:
         content: str,
         mode: Optional[str] = None,
         selected_tools: Optional[List[str]] = None,
-        file_ids: Optional[List[str]] = None,
+        file_ids: Optional[List[UUID]] = None,
     ) -> dict:
         """
         Builds the flat chat.message.created payload matching llm-service's
         ChatMessageCreatedEvent (app/models/request.py) exactly — no envelope
         wrapper, since llm-service's Kafka consumer deserializes the raw
-        message body directly into that Pydantic model.
+        message body directly into that Pydantic model. file_ids are the
+        attached File Service document_ids — retrieval can use them to
+        restrict/boost context against the uploaded documents.
         """
         now = datetime.now(timezone.utc).isoformat()
         correlation_id = get_correlation_id()
@@ -66,7 +68,7 @@ class MessageService:
             "content": content,
             "mode_hint": mode,
             "selected_tools": selected_tools or [],
-            "file_ids": file_ids or [],
+            "file_ids": [str(fid) for fid in file_ids] if file_ids else [],
             "metadata": {},
             "trace_context": {"traceparent": correlation_id, "tracestate": ""},
             "timestamp": now,
@@ -81,7 +83,7 @@ class MessageService:
         user_id: Optional[UUID] = None,
         mode: Optional[str] = None,
         selected_tools: Optional[List[str]] = None,
-        file_ids: Optional[List[str]] = None,
+        file_ids: Optional[List[UUID]] = None,
     ) -> Message:
         """
         Persists a message atomically, updates cache, and stages outbox task.
@@ -104,7 +106,8 @@ class MessageService:
             status="sent",
             event_id=event_id,
             event_type=KafkaTopics.CHAT_MESSAGE_CREATED,
-            outbox_payload=json.dumps(payload)
+            outbox_payload=json.dumps(payload),
+            file_ids=file_ids
         )
 
         # Invalidate history cache
@@ -198,8 +201,12 @@ class MessageService:
         prompt_content = prompt_msg.content if prompt_msg else ""
         prompt_user_id = getattr(prompt_msg, "user_id", None)
 
+        # Carries the original prompt's file_ids forward so a regenerated
+        # response is re-derived against the same attached documents —
+        # only possible now that history() actually returns file_ids.
         payload = self._build_chat_message_created_payload(
-            conversation_id, new_msg_id, prompt_user_id, prompt_content
+            conversation_id, new_msg_id, prompt_user_id, prompt_content,
+            file_ids=prompt_msg.file_ids if prompt_msg else None
         )
 
         # Stage regeneration atomically by soft deleting the old response and executing batch outbox stage

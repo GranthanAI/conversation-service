@@ -36,8 +36,15 @@ CREATE TABLE IF NOT EXISTS messages_by_conversation (
     content text,
     created_at timestamp,
     status text,
+    file_ids list<uuid>,
     PRIMARY KEY (conversation_id, message_id)
 ) WITH CLUSTERING ORDER BY (message_id DESC);
+
+-- NOTE: file_ids was added after this table's initial deployment.
+-- CREATE TABLE IF NOT EXISTS is a no-op against an already-existing table,
+-- so a dev/prod keyspace created before this change needs the column added
+-- explicitly (this repo has no formal migration tool, so run manually):
+--   ALTER TABLE messages_by_conversation ADD file_ids list<uuid>;
 
 -- Transactional Outbox Table
 CREATE TABLE IF NOT EXISTS transactional_outbox (
