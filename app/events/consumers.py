@@ -192,6 +192,9 @@ async def _handle_chat_response_generated(
             "content": "",
             "is_final": True,
             "status": "completed",
+            # Retrieval sources (file/page/section) for grounded answers; not
+            # persisted with the message, so only the live stream carries them.
+            "citations": event.get("citations") or [],
         })
         logger.info("Processed successful chat.response.generated from Kafka", message_id=message_id)
     else:
