@@ -142,15 +142,16 @@ async def _handle_chat_response_chunk(
         return
 
     conversation_id = UUID(conversation_id_str)
-    is_last = bool(event.get("is_last", False))
-
     await stream_service.publish_token(conversation_id, {
         "conversation_id": conversation_id_str,
         "message_id": message_id,
         "sender": "assistant",
         "content": event.get("content", ""),
         "sequence_number": sequence_number,
-        "is_final": is_last,
+        # Never final: only chat.response.generated ends a turn. It carries
+        # the complete text and citations, and can arrive after the last
+        # chunk, so flagging the last chunk final made clients stop early.
+        "is_final": False,
     })
 
     inbox_repo.save(dedup_id)
@@ -195,6 +196,10 @@ async def _handle_chat_response_generated(
             # Retrieval sources (file/page/section) for grounded answers; not
             # persisted with the message, so only the live stream carries them.
             "citations": event.get("citations") or [],
+            # Chunks and the final event travel on separate topics, so the final
+            # event can overtake the last chunks; clients should replace their
+            # streamed buffer with this complete text.
+            "full_content": full_content,
         })
         logger.info("Processed successful chat.response.generated from Kafka", message_id=message_id)
     else:
