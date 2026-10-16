@@ -1,0 +1,89 @@
+{
+  "chunk": {
+    "event_type": "chat.response.chunk",
+    "schema_version": "2.0",
+    "conversation_id": "c-1",
+    "user_id": "u-1",
+    "message_id": "m-1",
+    "chunk_index": 0,
+    "sequence_number": 1,
+    "content": "Hel",
+    "is_last": false,
+    "timestamp": "2026-10-16T18:48:42.487350Z"
+  },
+  "final": {
+    "event_type": "chat.response.generated",
+    "schema_version": "2.0",
+    "response_id": "r-1",
+    "conversation_id": "c-1",
+    "user_id": "u-1",
+    "request_message_id": "m-1",
+    "full_content": "Hello world",
+    "provider": "nvidia",
+    "generation_fallback_used": false,
+    "mode": "default",
+    "skill": "general_chat",
+    "engine_type": "mode_handler",
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    },
+    "cost_usd": 0.0,
+    "latency_ms": 0.0,
+    "ttft_ms": 0.0,
+    "finish_reason": "stop",
+    "tools_used": [],
+    "context_sources": [],
+    "citations": [
+      {
+        "file_id": "f-1",
+        "source_name": "a.pdf",
+        "page_number": 1,
+        "section": "Intro"
+      }
+    ],
+    "trace_context": {
+      "traceparent": "",
+      "tracestate": ""
+    },
+    "status": "success",
+    "error_code": null,
+    "error_message": null,
+    "timestamp": "2026-10-16T18:48:42.487880Z"
+  },
+  "error": {
+    "event_type": "chat.response.generated",
+    "schema_version": "2.0",
+    "response_id": "r-2",
+    "conversation_id": "c-1",
+    "user_id": "u-1",
+    "request_message_id": "m-2",
+    "full_content": null,
+    "provider": "nvidia",
+    "generation_fallback_used": false,
+    "mode": "default",
+    "skill": "general_chat",
+    "engine_type": "mode_handler",
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    },
+    "cost_usd": 0.0,
+    "latency_ms": 0.0,
+    "ttft_ms": 0.0,
+    "finish_reason": "stop",
+    "tools_used": [],
+    "context_sources": [],
+    "citations": [],
+    "trace_context": {
+      "traceparent": "",
+      "tracestate": ""
+    },
+    "status": "error",
+    "error_code": "X",
+    "error_message": "boom",
+    "timestamp": "2026-10-16T18:48:42.487880Z"
+  }
+}

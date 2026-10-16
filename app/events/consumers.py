@@ -182,6 +182,9 @@ async def _handle_chat_response_generated(
 
     conversation_id = UUID(conversation_id_str)
     status = event.get("status", "success")
+    # Terminal event received: the turn is answered (successfully or not), so the
+    # timeout worker must not fire for it later.
+    await msg_service.clear_pending_response(UUID(message_id))
 
     if status == "success":
         full_content = event.get("full_content") or ""

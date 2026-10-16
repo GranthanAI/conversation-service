@@ -140,7 +140,9 @@ class MessageService:
         try:
             key = f"pending_response:{message_id}"
             await self.cache.redis.set(
-                key, str(conversation_id), ex=settings.PENDING_RESPONSE_TIMEOUT_SECONDS
+                key,
+                str(conversation_id),
+                ex=settings.PENDING_RESPONSE_TIMEOUT_SECONDS + settings.PENDING_RESPONSE_MARKER_GRACE_SECONDS,
             )
             await self.cache.redis.zadd(
                 "pending_response:zset",
@@ -148,6 +150,16 @@ class MessageService:
             )
         except Exception as e:
             logger.warning("Failed to register pending-response timeout marker", message_id=str(message_id), error=str(e))
+
+    async def clear_pending_response(self, message_id: UUID) -> None:
+        """Removes the pending-response marker once a terminal response (success
+        or error) has been handled, so the timeout worker never fails a message
+        that was already answered."""
+        try:
+            await self.cache.redis.delete(f"pending_response:{message_id}")
+            await self.cache.redis.zrem("pending_response:zset", str(message_id))
+        except Exception as e:
+            logger.warning("Failed to clear pending-response marker", message_id=str(message_id), error=str(e))
 
     async def history(self, conversation_id: UUID, limit: int = settings.MESSAGE_HISTORY_DEFAULT_LIMIT, cursor: Optional[UUID] = None) -> List[Message]:
         """

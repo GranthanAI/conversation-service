@@ -85,6 +85,9 @@ class Settings(BaseSettings):
 
     # Pending Response Timeout settings (llm-service Kafka round-trip watchdog)
     PENDING_RESPONSE_TIMEOUT_SECONDS: int = 120
+    # The Redis marker must outlive the deadline, otherwise the timeout worker
+    # finds the key already expired and mistakes it for "response arrived".
+    PENDING_RESPONSE_MARKER_GRACE_SECONDS: int = 300
     PENDING_TIMEOUT_WORKER_POLL_INTERVAL_SECONDS: float = 5.0
 
 settings = Settings()
