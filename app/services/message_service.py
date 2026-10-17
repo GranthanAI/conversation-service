@@ -28,6 +28,12 @@ class PendingResponseRegistrationError(Exception):
     placeholder removed."""
 
 
+# Bounds for the history attached to each request event.
+HISTORY_EVENT_MAX_MESSAGES = 10
+HISTORY_EVENT_MAX_MESSAGE_CHARS = 2000
+HISTORY_EVENT_MAX_CHARS = 8000
+
+
 class MessageService:
     """
     Service orchestrator handling conversational message logs and streaming triggers.
@@ -60,6 +66,7 @@ class MessageService:
         file_ids: Optional[List[UUID]] = None,
         response_message_id: Optional[UUID] = None,
         metadata: Optional[dict] = None,
+        history: Optional[List[dict]] = None,
     ) -> dict:
         """
         Builds the flat chat.message.created payload matching llm-service's
@@ -88,6 +95,9 @@ class MessageService:
             "mode_hint": mode,
             "selected_tools": selected_tools or [],
             "file_ids": [str(fid) for fid in file_ids] if file_ids else [],
+            # Recent turns before this request (oldest first), so llm-service has the conversation even when
+            # the memory service is slow or down. Optional and additive: older consumers ignore it.
+            "history": history or [],
             "metadata": metadata or {},
             "trace_context": {"traceparent": correlation_id, "tracestate": ""},
             "timestamp": now,
@@ -121,9 +131,12 @@ class MessageService:
         """
         response_message_id = uuidv7_after(message_id) if sender == "user" else None
         event_id = uuid.uuid1()
+        # Read BEFORE this turn's rows exist, so the history is strictly what came earlier.
+        history = await self._recent_history(conversation_id) if sender == "user" else []
         payload = self._build_chat_message_created_payload(
             conversation_id, message_id, user_id, content, mode, selected_tools, file_ids,
             response_message_id=response_message_id,
+            history=history,
         )
 
         if response_message_id:
@@ -150,6 +163,40 @@ class MessageService:
         await self._invalidate_cache(conversation_id)
         msg.response_message_id = response_message_id
         return msg
+
+    async def _recent_history(self, conversation_id: UUID) -> List[dict]:
+        """Recent completed turns for the request event (best effort: a history read failure must never
+        block sending a message)."""
+        try:
+            msgs = await self.history(conversation_id, limit=HISTORY_EVENT_MAX_MESSAGES * 2)
+        except Exception as e:
+            logger.warning("Could not read history for the request event", conversation_id=str(conversation_id), error=str(e))
+            return []
+        return self._format_history(msgs)
+
+    @staticmethod
+    def _format_history(messages_newest_first: List[Message]) -> List[dict]:
+        """Newest-first rows -> oldest-first [{role, content}], keeping only finished user/assistant text.
+        Pending placeholders, failed replies and system/summary rows are skipped; each message and the
+        total are size-capped so the event stays small."""
+        picked: List[dict] = []
+        budget = HISTORY_EVENT_MAX_CHARS
+        for m in messages_newest_first:
+            if m.sender not in ("user", "assistant"):
+                continue
+            status = getattr(m.status, "value", m.status)
+            text = (m.content or "").strip()
+            if status != "sent" or not text:
+                continue
+            text = text[:HISTORY_EVENT_MAX_MESSAGE_CHARS]
+            if budget - len(text) < 0 and picked:
+                break
+            budget -= len(text)
+            picked.append({"role": m.sender, "content": text})
+            if len(picked) >= HISTORY_EVENT_MAX_MESSAGES:
+                break
+        picked.reverse()
+        return picked
 
     async def _open_pending_response(self, conversation_id: UUID, response_message_id: UUID) -> None:
         """Creates the pending assistant row and registers its timeout marker (in that
@@ -262,12 +309,14 @@ class MessageService:
 
         target_msg = None
         prompt_msg = None
+        older_than_prompt: List[Message] = []
 
         for i, m in enumerate(history_msgs):
             if m.message_id == message_id:
                 target_msg = m
                 if i + 1 < len(history_msgs):
                     prompt_msg = history_msgs[i + 1]
+                    older_than_prompt = history_msgs[i + 2:]
                 break
 
         if not target_msg:
@@ -284,6 +333,7 @@ class MessageService:
             conversation_id, request_id, prompt_user_id, prompt_content,
             file_ids=prompt_msg.file_ids if prompt_msg else None,
             response_message_id=response_message_id,
+            history=self._format_history(older_than_prompt),
             metadata={
                 "regeneration": True,
                 "prompt_message_id": str(prompt_msg.message_id) if prompt_msg else None,

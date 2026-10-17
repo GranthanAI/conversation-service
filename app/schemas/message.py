@@ -6,7 +6,14 @@ Request validation forms and response DTOs for Message endpoints.
 from typing import List, Optional
 from datetime import datetime
 from uuid import UUID
+import re
+
 from pydantic import BaseModel, Field, field_validator
+
+# Tool ids are registry names (e.g. web_search). Shape-checked here; whether a tool exists and is
+# enabled is decided by llm-service (the registry owner) before anything runs.
+_TOOL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
+MAX_SELECTED_TOOLS = 10
 
 class CreateMessageRequest(BaseModel):
     """
@@ -25,6 +32,31 @@ class CreateMessageRequest(BaseModel):
         if not trimmed:
             raise ValueError("Message content cannot be empty or whitespace.")
         return trimmed
+
+    @field_validator("mode")
+    def validate_mode(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip()
+        # Shape only; llm-service decides which modes exist and are enabled.
+        if v and not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", v):
+            raise ValueError("Invalid mode.")
+        return v or None
+
+    @field_validator("selected_tools")
+    def validate_selected_tools(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        cleaned: List[str] = []
+        for raw in v:
+            name = raw.strip()
+            if not _TOOL_ID.match(name):
+                raise ValueError(f"Invalid tool id: {raw[:64]!r}")
+            if name not in cleaned:  # a tool is selected at most once
+                cleaned.append(name)
+        if len(cleaned) > MAX_SELECTED_TOOLS:
+            raise ValueError(f"At most {MAX_SELECTED_TOOLS} tools can be selected.")
+        return cleaned
 
 class MessageResponse(BaseModel):
     """
