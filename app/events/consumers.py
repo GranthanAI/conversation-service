@@ -135,6 +135,9 @@ def _response_message_id(event: dict, kind: str):
         return None
 
 
+from app.utils.helpers import uuid7_age_ms  # noqa: E402
+
+
 async def _handle_chat_response_chunk(
     event: dict,
     inbox_repo: CassandraInboxRepository,
@@ -164,6 +167,12 @@ async def _handle_chat_response_chunk(
         return
 
     conversation_id = UUID(conversation_id_str)
+    if sequence_number in (0, 1):
+        logger.info(
+            "turn_timing", stage="first_chunk_published", conversation_id=conversation_id_str,
+            response_message_id=str(response_id), request_message_id=event.get("message_id"),
+            since_accept_ms=uuid7_age_ms(response_id),
+        )
     await stream_service.publish_token(conversation_id, {
         "conversation_id": conversation_id_str,
         "message_id": str(response_id),
@@ -213,6 +222,11 @@ async def _handle_chat_response_generated(
 
     conversation_id = UUID(conversation_id_str)
     status = event.get("status", "success")
+    logger.info(
+        "turn_timing", stage="final_received", status=status, conversation_id=conversation_id_str,
+        response_message_id=str(response_id), request_message_id=request_message_id,
+        since_accept_ms=uuid7_age_ms(response_id),
+    )
     base_payload = {
         "conversation_id": conversation_id_str,
         "message_id": str(response_id),

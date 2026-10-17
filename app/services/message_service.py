@@ -365,6 +365,11 @@ class MessageService:
         """Marks the assistant message failed (same user-row guard as finalize)."""
         if not self._is_writable_assistant_row(conversation_id, message_id):
             return None
+        existing = self.repo.get_message(conversation_id, message_id)
+        if existing is not None and existing.sender == "assistant" and existing.status == "sent" and existing.content:
+            # A real reply is already stored; a late failure event must never overwrite it.
+            logger.warning("Ignoring late failure for an already-completed reply", message_id=str(message_id))
+            return existing
         msg = self.repo.create_message_direct(
             conversation_id=conversation_id,
             message_id=message_id,

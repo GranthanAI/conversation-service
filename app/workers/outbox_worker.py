@@ -10,6 +10,7 @@ from typing import Set, Optional
 import redis.asyncio as aioredis
 
 from app.core.logging import logger
+from app.utils.helpers import timeuuid_age_ms
 from app.repositories.outbox_repository import CassandraOutboxRepository
 from app.clients.kafka_producer import kafka_producer_client
 from app.core.config import settings
@@ -113,6 +114,12 @@ class DistributedOutboxWorker:
                     )
                     
                     self.repo.mark_published(event.bucket, event.event_id)
+                    logger.info(
+                        "outbox_published", topic=event.event_type, event_id=str(event.event_id),
+                        conversation_id=payload.get("conversation_id"),
+                        response_message_id=payload.get("response_message_id"),
+                        outbox_delay_ms=timeuuid_age_ms(event.event_id),
+                    )
                 except Exception as e:
                     logger.error(
                         "Outbox worker failed to process event inside locked bucket. Skipping.",
