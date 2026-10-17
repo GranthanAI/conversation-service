@@ -8,7 +8,8 @@ class KafkaTopics:
     Registry constants representing system Kafka topics.
     """
     CHAT_MESSAGE_CREATED = "chat.message.created"
-    CHAT_RESPONSE_COMPLETED = "chat.response.completed"
+    CHAT_RESPONSE_CHUNK = "chat.response.chunk"
+    CHAT_RESPONSE_GENERATED = "chat.response.generated"
 
     CONVERSATION_CREATED = "conversation.created"
     CONVERSATION_UPDATED = "conversation.updated"

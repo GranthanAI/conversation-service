@@ -56,7 +56,7 @@ async def test_kafka_publish_and_consume(setup_kafka):
             # Poll with timeout to avoid blocking forever if brokers fail
             async with asyncio.timeout(5.0):
                 async for msg in consumer:
-                    if msg.key.decode("utf-8") == test_key:
+                    if msg.key and msg.key.decode("utf-8") == test_key:
                         consumed = msg
                         break
         except TimeoutError:

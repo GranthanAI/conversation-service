@@ -38,7 +38,8 @@ class CassandraMessageRepository:
         status: str,
         event_id: UUID,
         event_type: str,
-        outbox_payload: str
+        outbox_payload: str,
+        file_ids: Optional[List[UUID]] = None
     ) -> Message:
         """
         Atomic transactional write saving message data and outbox task in a single LOGGED BATCH.
@@ -47,31 +48,33 @@ class CassandraMessageRepository:
         now = datetime.now(timezone.utc)
         timestamp_micros = int(time.time() * 1000000)
         bucket = conversation_id.int % 32
-        
+        file_ids = file_ids or []
+
         cql = """
             BEGIN BATCH
-                INSERT INTO messages_by_conversation (conversation_id, message_id, sender, content, created_at, status)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO messages_by_conversation (conversation_id, message_id, sender, content, created_at, status, file_ids)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 USING TIMESTAMP ?;
-                
+
                 INSERT INTO transactional_outbox (bucket, event_id, event_type, payload, published, created_at)
                 VALUES (?, ?, ?, ?, ?, ?);
             APPLY BATCH;
         """
         stmt = self._get_prepared("create_msg_outbox", cql)
-        
+
         self.manager.session.execute(stmt, (
-            conversation_id, message_id, sender, content, now, status, timestamp_micros,
+            conversation_id, message_id, sender, content, now, status, file_ids, timestamp_micros,
             bucket, event_id, event_type, outbox_payload, False, now
         ))
-        
+
         return Message(
             conversation_id=conversation_id,
             message_id=message_id,
             sender=sender,
             content=content,
             created_at=now,
-            status=MessageStatus(status)
+            status=MessageStatus(status),
+            file_ids=file_ids
         )
 
     def history(self, conversation_id: UUID, limit: int = 50, cursor: Optional[UUID] = None) -> List[Message]:
@@ -80,7 +83,7 @@ class CassandraMessageRepository:
         """
         if cursor:
             cql = """
-                SELECT message_id, sender, content, created_at, status
+                SELECT message_id, sender, content, created_at, status, file_ids
                 FROM messages_by_conversation
                 WHERE conversation_id = ? AND message_id < ?
                 LIMIT ?
@@ -89,7 +92,7 @@ class CassandraMessageRepository:
             rows = self.manager.session.execute(stmt, (conversation_id, cursor, limit))
         else:
             cql = """
-                SELECT message_id, sender, content, created_at, status
+                SELECT message_id, sender, content, created_at, status, file_ids
                 FROM messages_by_conversation
                 WHERE conversation_id = ?
                 LIMIT ?
@@ -107,7 +110,8 @@ class CassandraMessageRepository:
                 sender=row.sender,
                 content=row.content,
                 created_at=row.created_at,
-                status=MessageStatus(row.status)
+                status=MessageStatus(row.status),
+                file_ids=list(row.file_ids) if row.file_ids else []
             ))
         return messages
 

@@ -52,7 +52,8 @@ class KafkaConnectionManager:
             try:
                 self.consumer = AIOKafkaConsumer(
                     KafkaTopics.TITLE_GENERATED,
-                    KafkaTopics.CHAT_RESPONSE_COMPLETED,
+                    KafkaTopics.CHAT_RESPONSE_CHUNK,
+                    KafkaTopics.CHAT_RESPONSE_GENERATED,
                     bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
                     group_id=settings.KAFKA_CONSUMER_GROUP,
                     enable_auto_commit=False

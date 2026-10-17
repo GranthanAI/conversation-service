@@ -5,7 +5,6 @@ Coordinates Cache-Aside caching, database operations, and direct Kafka event pub
 
 import json
 import uuid
-import asyncio
 from typing import List, Optional
 from datetime import datetime, timezone
 from uuid import UUID
@@ -17,6 +16,7 @@ from app.core.logging import logger
 from app.services.cache_service import CacheService
 from app.clients.kafka_producer import KafkaProducerClient
 from app.core.config import settings
+from app.middleware.correlation import get_correlation_id
 
 class MessageService:
     """
@@ -39,19 +39,65 @@ class MessageService:
         if self.cache:
             await self.cache.delete_last_50_messages(conversation_id)
 
-    async def send(self, conversation_id: UUID, message_id: UUID, sender: str, content: str) -> Message:
+    def _build_chat_message_created_payload(
+        self,
+        conversation_id: UUID,
+        message_id: UUID,
+        user_id: Optional[UUID],
+        content: str,
+        mode: Optional[str] = None,
+        selected_tools: Optional[List[str]] = None,
+        file_ids: Optional[List[UUID]] = None,
+    ) -> dict:
+        """
+        Builds the flat chat.message.created payload matching llm-service's
+        ChatMessageCreatedEvent (app/models/request.py) exactly — no envelope
+        wrapper, since llm-service's Kafka consumer deserializes the raw
+        message body directly into that Pydantic model. file_ids are the
+        attached File Service document_ids — retrieval can use them to
+        restrict/boost context against the uploaded documents.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        correlation_id = get_correlation_id()
+        return {
+            "event_type": "chat.message.created",
+            "schema_version": "2.0",
+            "message_id": str(message_id),
+            "conversation_id": str(conversation_id),
+            "user_id": str(user_id) if user_id else "",
+            "content": content,
+            "mode_hint": mode,
+            "selected_tools": selected_tools or [],
+            "file_ids": [str(fid) for fid in file_ids] if file_ids else [],
+            "metadata": {},
+            "trace_context": {"traceparent": correlation_id, "tracestate": ""},
+            "timestamp": now,
+        }
+
+    async def send(
+        self,
+        conversation_id: UUID,
+        message_id: UUID,
+        sender: str,
+        content: str,
+        user_id: Optional[UUID] = None,
+        mode: Optional[str] = None,
+        selected_tools: Optional[List[str]] = None,
+        file_ids: Optional[List[UUID]] = None,
+    ) -> Message:
         """
         Persists a message atomically, updates cache, and stages outbox task.
+        The user's message publishes a flat chat.message.created event (no
+        envelope) matching llm-service's expected Kafka Consumer shape.
+        Response generation happens asynchronously when llm-service publishes
+        chat.response.chunk / chat.response.generated back over Kafka — this
+        method does not call llm-service directly.
         """
         event_id = uuid.uuid1()
-        payload = {
-            "conversation_id": str(conversation_id),
-            "message_id": str(message_id),
-            "sender": sender,
-            "content": content,
-            "status": "sent"
-        }
-        
+        payload = self._build_chat_message_created_payload(
+            conversation_id, message_id, user_id, content, mode, selected_tools, file_ids
+        )
+
         msg = self.repo.create_with_outbox(
             conversation_id=conversation_id,
             message_id=message_id,
@@ -60,13 +106,16 @@ class MessageService:
             status="sent",
             event_id=event_id,
             event_type=KafkaTopics.CHAT_MESSAGE_CREATED,
-            outbox_payload=json.dumps(payload)
+            outbox_payload=json.dumps(payload),
+            file_ids=file_ids
         )
-        
+
         # Invalidate history cache
         await self._invalidate_cache(conversation_id)
 
-        # Trigger simulated/real LLM response in background if user sent the message
+        # Create the pending assistant placeholder and register a response
+        # timeout so the client isn't left waiting forever if llm-service
+        # never responds (see PendingTimeoutWorker).
         if sender == "user":
             assistant_msg_id = uuid.uuid4()
             self.repo.create_message_direct(
@@ -76,9 +125,41 @@ class MessageService:
                 content="",
                 status="pending"
             )
-            asyncio.create_task(self.simulate_generation_pipeline(conversation_id, assistant_msg_id, content))
-            
+            await self._register_pending_response(conversation_id, assistant_msg_id)
+
         return msg
+
+    async def _register_pending_response(self, conversation_id: UUID, message_id: UUID) -> None:
+        """
+        Records a pending-response marker in Redis with a TTL so the
+        PendingTimeoutWorker can detect and fail messages that never receive
+        a chat.response.generated event from llm-service.
+        """
+        if not self.cache or not self.cache.redis:
+            return
+        try:
+            key = f"pending_response:{message_id}"
+            await self.cache.redis.set(
+                key,
+                str(conversation_id),
+                ex=settings.PENDING_RESPONSE_TIMEOUT_SECONDS + settings.PENDING_RESPONSE_MARKER_GRACE_SECONDS,
+            )
+            await self.cache.redis.zadd(
+                "pending_response:zset",
+                {str(message_id): datetime.now(timezone.utc).timestamp() + settings.PENDING_RESPONSE_TIMEOUT_SECONDS},
+            )
+        except Exception as e:
+            logger.warning("Failed to register pending-response timeout marker", message_id=str(message_id), error=str(e))
+
+    async def clear_pending_response(self, message_id: UUID) -> None:
+        """Removes the pending-response marker once a terminal response (success
+        or error) has been handled, so the timeout worker never fails a message
+        that was already answered."""
+        try:
+            await self.cache.redis.delete(f"pending_response:{message_id}")
+            await self.cache.redis.zrem("pending_response:zset", str(message_id))
+        except Exception as e:
+            logger.warning("Failed to clear pending-response marker", message_id=str(message_id), error=str(e))
 
     async def history(self, conversation_id: UUID, limit: int = settings.MESSAGE_HISTORY_DEFAULT_LIMIT, cursor: Optional[UUID] = None) -> List[Message]:
         """
@@ -128,16 +209,17 @@ class MessageService:
 
         # Calculate outbox params for new assistant streaming response
         event_id = uuid.uuid1()
-        new_msg_id = uuid.uuid1() # generate a new response task ID
-        
-        payload = {
-            "conversation_id": str(conversation_id),
-            "message_id": str(new_msg_id),
-            "sender": "assistant",
-            "content": "",
-            "prompt_content": prompt_msg.content if prompt_msg else "",
-            "status": "pending"
-        }
+        new_msg_id = uuid.uuid1()  # generate a new response task ID
+        prompt_content = prompt_msg.content if prompt_msg else ""
+        prompt_user_id = getattr(prompt_msg, "user_id", None)
+
+        # Carries the original prompt's file_ids forward so a regenerated
+        # response is re-derived against the same attached documents —
+        # only possible now that history() actually returns file_ids.
+        payload = self._build_chat_message_created_payload(
+            conversation_id, new_msg_id, prompt_user_id, prompt_content,
+            file_ids=prompt_msg.file_ids if prompt_msg else None
+        )
 
         # Stage regeneration atomically by soft deleting the old response and executing batch outbox stage
         if target_msg.sender == "assistant":
@@ -158,10 +240,9 @@ class MessageService:
 
         await self._invalidate_cache(conversation_id)
 
-        # Trigger simulated/real LLM response in background
-        prompt_content = prompt_msg.content if prompt_msg else ""
-        asyncio.create_task(self.simulate_generation_pipeline(conversation_id, new_msg_id, prompt_content))
-            
+        # Register a response timeout in case llm-service never responds
+        await self._register_pending_response(conversation_id, new_msg_id)
+
         return target_msg
 
     async def finalize_assistant_message(
@@ -202,88 +283,3 @@ class MessageService:
         await self._invalidate_cache(conversation_id)
         return msg
 
-    async def simulate_generation_pipeline(self, conversation_id: UUID, message_id: UUID, prompt: str) -> None:
-        """
-        Calls downstream LLM gRPC service, falls back to typewriter simulation in development environment.
-        Stages any failures to the chat.message.dlq Kafka topic.
-        """
-        from app.clients.grpc_client import grpc_generation_client
-        from app.services.stream_service import StreamService
-        from app.repositories.outbox_repository import CassandraOutboxRepository
-        from app.core.config import settings
-
-        stream_service = StreamService(redis_client=self.cache.redis if self.cache else None)
-        accumulated_content = ""
-
-        try:
-            # 1. Attempt to run real gRPC client token generator stream
-            async for chunk in grpc_generation_client.generate(conversation_id, message_id, prompt):
-                accumulated_content += chunk["content"]
-                await stream_service.publish_token(conversation_id, chunk)
-            
-            # Finalize message on successful completion
-            await self.finalize_assistant_message(conversation_id, message_id, accumulated_content)
-            
-        except Exception as e:
-            logger.warning("gRPC generation connection failed. Evaluating fallback policy...", error=str(e))
-            
-            if settings.ENVIRONMENT == "development":
-                logger.info("Falling back to typewriter simulation generator (Development Mode).")
-                # Wait a short moment
-                await asyncio.sleep(0.5)
-                full_text = f"This is a simulated AI assistant streaming response for your prompt: '{prompt}'."
-                chunks = [full_text[i:i+4] for i in range(0, len(full_text), 4)]
-                
-                for index, chunk in enumerate(chunks):
-                    is_final = (index == len(chunks) - 1)
-                    chunk_payload = {
-                        "conversation_id": str(conversation_id),
-                        "message_id": str(message_id),
-                        "sender": "assistant",
-                        "content": chunk,
-                        "is_final": is_final
-                    }
-                    await stream_service.publish_token(conversation_id, chunk_payload)
-                    await asyncio.sleep(0.05)
-                
-                await self.finalize_assistant_message(conversation_id, message_id, full_text)
-            else:
-                # 2. Production Failure Recovery (Retry & DLQ)
-                logger.error("Generation failed. Updating Cassandra message status and routing to DLQ.", error=str(e))
-                # Set message status to failed
-                self.repo.create_message_direct(
-                    conversation_id=conversation_id,
-                    message_id=message_id,
-                    sender="assistant",
-                    content=accumulated_content,
-                    status="failed"
-                )
-                
-                # Push failure notification to SSE stream
-                err_payload = {
-                    "conversation_id": str(conversation_id),
-                    "message_id": str(message_id),
-                    "sender": "assistant",
-                    "content": "Generation aborted: service connection lost",
-                    "is_final": True,
-                    "status": "failed"
-                }
-                await stream_service.publish_token(conversation_id, err_payload)
-                
-                # Write failure payload to Outbox mapped to the Kafka DLQ topic
-                dlq_payload = {
-                    "conversation_id": str(conversation_id),
-                    "message_id": str(message_id),
-                    "sender": "assistant",
-                    "prompt_content": prompt,
-                    "accumulated_content": accumulated_content,
-                    "error_details": str(e),
-                    "failed_at": datetime.now(timezone.utc).isoformat()
-                }
-                outbox_repo = CassandraOutboxRepository()
-                outbox_repo.save(
-                    bucket=conversation_id.int % 32,
-                    event_id=uuid.uuid1(),
-                    event_type="chat.message.dlq",
-                    payload=json.dumps(dlq_payload)
-                )

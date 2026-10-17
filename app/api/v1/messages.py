@@ -66,7 +66,8 @@ async def create_message(
                 sender=cached_data["sender"],
                 content=cached_data["content"],
                 created_at=datetime.fromisoformat(cached_data["created_at"]),
-                status=cached_data["status"]
+                status=cached_data["status"],
+                file_ids=[UUID(fid) for fid in cached_data.get("file_ids", [])]
             )
 
     # Process normally
@@ -76,7 +77,11 @@ async def create_message(
             conversation_id=conversation_id,
             message_id=message_id,
             sender="user",
-            content=payload.content
+            content=payload.content,
+            user_id=conv.user_id,
+            mode=payload.mode,
+            selected_tools=payload.selected_tools,
+            file_ids=payload.file_ids,
         )
     except Exception as e:
         if x_idempotency_key:
@@ -90,7 +95,8 @@ async def create_message(
             "sender": msg.sender,
             "content": msg.content,
             "created_at": msg.created_at.isoformat(),
-            "status": msg.status.value
+            "status": msg.status.value,
+            "file_ids": [str(fid) for fid in msg.file_ids]
         }
         await idempotency_service.save_response(x_idempotency_key, response_data)
 

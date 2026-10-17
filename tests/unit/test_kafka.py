@@ -61,10 +61,8 @@ async def test_message_service_send_writes_to_outbox(mock_repos):
     )
     
     service = MessageService(repo=mock_msg_repo)
-    # Patch background simulate generation pipeline task to prevent running it in tests
-    with patch.object(service, "simulate_generation_pipeline", return_value=None):
-        await service.send(conv_id, msg_id, "user", "Hello Outbox")
-        
+    await service.send(conv_id, msg_id, "user", "Hello Outbox")
+
     mock_msg_repo.create_with_outbox.assert_called_once()
 
 @pytest.mark.anyio

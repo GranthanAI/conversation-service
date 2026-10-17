@@ -22,13 +22,14 @@ from app.core.logging import logger
 from app.db.cassandra import cassandra_manager
 from app.db.redis import redis_manager
 from app.db.kafka import kafka_manager
-from app.db.grpc import grpc_manager
 from app.api.router import api_router
 from app.events.consumers import start_kafka_consumer
 from app.workers.outbox_worker import start_outbox_worker
 from app.workers.cleanup_worker import start_cleanup_worker
 from app.workers.retry_worker import start_retry_worker
 from app.workers.summary_worker import start_summary_worker
+from app.workers.pending_timeout_worker import start_pending_timeout_worker
+from app.middleware.correlation import CorrelationIDMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,25 +41,26 @@ async def lifespan(app: FastAPI):
     cassandra_manager.initialize()
     redis_manager.initialize()
     await kafka_manager.initialize()
-    await grpc_manager.initialize()
-    
+
     # Spawn background consumer and outbox tasks
     app.state.kafka_consumer_task = asyncio.create_task(start_kafka_consumer())
     app.state.outbox_worker_task = asyncio.create_task(start_outbox_worker())
     app.state.cleanup_worker_task = asyncio.create_task(start_cleanup_worker())
     app.state.retry_worker_task = asyncio.create_task(start_retry_worker())
     app.state.summary_worker_task = asyncio.create_task(start_summary_worker())
-    
+    app.state.pending_timeout_worker_task = asyncio.create_task(start_pending_timeout_worker())
+
     yield
     # 2. Shutdown phase
     logger.info("Shutting down FastAPI application lifespan context...")
-    
+
     # Cancel tasks
     app.state.kafka_consumer_task.cancel()
     app.state.outbox_worker_task.cancel()
     app.state.cleanup_worker_task.cancel()
     app.state.retry_worker_task.cancel()
     app.state.summary_worker_task.cancel()
+    app.state.pending_timeout_worker_task.cancel()
     try:
         await asyncio.gather(
             app.state.kafka_consumer_task,
@@ -66,15 +68,15 @@ async def lifespan(app: FastAPI):
             app.state.cleanup_worker_task,
             app.state.retry_worker_task,
             app.state.summary_worker_task,
+            app.state.pending_timeout_worker_task,
             return_exceptions=True
         )
     except asyncio.CancelledError:
         pass
-        
+
     cassandra_manager.close()
     await redis_manager.close()
     await kafka_manager.close()
-    await grpc_manager.close()
 
 app = FastAPI(
     title="GraphGPT Conversation Service",
@@ -83,8 +85,12 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Middleware: Correlation ID must be first so all downstream code can read it
+app.add_middleware(CorrelationIDMiddleware)
+
 # Mount central API routing prefixes
 app.include_router(api_router, prefix="/v1")
+
 
 # Global health check redirects for standard paths
 @app.get("/live", status_code=status.HTTP_200_OK, tags=["Health Checks"])
@@ -102,16 +108,14 @@ async def root_readiness(response: Response):
     cassandra_ok = cassandra_manager.check_health()
     redis_ok = await redis_manager.check_health()
     kafka_ok = await kafka_manager.check_health()
-    grpc_ok = await grpc_manager.check_health()
-    
+
     status_info = {
         "cassandra": "UP" if cassandra_ok else "DOWN",
         "redis": "UP" if redis_ok else "DOWN",
         "kafka": "UP" if kafka_ok else "DOWN",
-        "grpc": "UP" if grpc_ok else "DOWN"
     }
-    
-    if not (cassandra_ok and redis_ok and kafka_ok and grpc_ok):
+
+    if not (cassandra_ok and redis_ok and kafka_ok):
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "DOWN", "details": status_info}
         

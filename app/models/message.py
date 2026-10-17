@@ -3,8 +3,9 @@ Message Domain Entity.
 Defines message schemas containing user requests and LLM replies.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from typing import List
 from uuid import UUID
 from enum import Enum
 
@@ -27,3 +28,4 @@ class Message:
     content: str
     created_at: datetime
     status: MessageStatus = MessageStatus.PENDING
+    file_ids: List[UUID] = field(default_factory=list)  # attached File Service document_ids, "Ask Files" mode

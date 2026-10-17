@@ -1,12 +1,30 @@
 """
 Structured Logging Configuration.
 Sets up standard python logging integrated with structlog to output formatted JSON traces.
+Automatically injects correlation_id from the request context into every log record.
 """
 
 import logging
 import sys
 import structlog
 from app.core.config import settings
+
+
+def _inject_correlation_id(logger, method_name, event_dict):
+    """
+    Structlog processor: reads the current X-Correlation-ID from the ContextVar
+    and injects it as `correlation_id` into every log record.
+    Import is deferred to avoid circular import at module load time.
+    """
+    try:
+        from app.middleware.correlation import get_correlation_id
+        cid = get_correlation_id()
+        if cid:
+            event_dict["correlation_id"] = cid
+    except Exception:
+        pass  # Never let logging break the request
+    return event_dict
+
 
 def setup_logging():
     """
@@ -17,6 +35,7 @@ def setup_logging():
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),
+        _inject_correlation_id,
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
     ]
