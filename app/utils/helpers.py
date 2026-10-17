@@ -52,3 +52,33 @@ def uuidv7() -> uuid.UUID:
         rand_bytes[3:]            # index 9-15: random
     )
     return uuid.UUID(bytes=uuid_bytes)
+
+
+def uuid7_age_ms(value) -> float | None:
+    """Milliseconds since a UUIDv7 was minted (its first 48 bits are a unix-ms timestamp).
+    Used to derive time-since-accept for an assistant response id without storing extra state."""
+    import time
+    import uuid as _uuid
+
+    try:
+        u = value if isinstance(value, _uuid.UUID) else _uuid.UUID(str(value))
+        if u.version != 7:
+            return None
+        return max(0.0, round(time.time() * 1000.0 - int(u.hex[:12], 16), 1))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def timeuuid_age_ms(value) -> float | None:
+    """Milliseconds since a UUIDv1 (timeuuid) was minted."""
+    import time
+    import uuid as _uuid
+
+    try:
+        u = value if isinstance(value, _uuid.UUID) else _uuid.UUID(str(value))
+        if u.version != 1:
+            return None
+        unix_s = (u.time - 0x01B21DD213814000) / 1e7
+        return max(0.0, round((time.time() - unix_s) * 1000.0, 1))
+    except (ValueError, AttributeError, TypeError):
+        return None

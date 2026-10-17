@@ -58,9 +58,15 @@ async def test_stream_service_publish_token(mock_redis):
     payload = {"chunk": "Test", "is_final": False}
     service = StreamService(redis_client=mock_redis)
     
+    mock_redis.xadd.return_value = "1700000000000-0"
+
     await service.publish_token(conv_id, payload)
-    
-    mock_redis.publish.assert_called_once_with(f"conversation:{conv_id}:stream", json.dumps(payload))
+
+    # appended to the replay log, then published live tagged with the log's event_id
+    mock_redis.xadd.assert_called_once()
+    mock_redis.publish.assert_called_once_with(
+        f"conversation:{conv_id}:stream", json.dumps({**payload, "event_id": "1700000000000-0"})
+    )
 
 def test_api_get_stream_requires_auth():
     client = TestClient(app)
@@ -89,7 +95,7 @@ def test_api_get_stream_success():
     
     # Mock StreamService subscribe
     mock_stream_service = MagicMock()
-    async def mock_subscribe(conversation_id):
+    async def mock_subscribe(conversation_id, message_id=None, since=None):
         yield "data: {\"chunk\": \"Hello\"}\n\n"
         yield "data: {\"chunk\": \" World\", \"is_final\": true}\n\n"
     

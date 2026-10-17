@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     STREAM_HEARTBEAT_INTERVAL_SECONDS: float = 20.0
     STREAM_PUBSUB_TIMEOUT_SECONDS: float = 1.0
     STREAM_ERROR_SLEEP_SECONDS: float = 0.5
+    # Replayable event log (Redis Stream per conversation, same Redis). Pub/Sub alone is
+    # ephemeral; the log lets a client that connected late or reconnected recover the events
+    # of an in-flight turn. Retention is deliberately short: persisted history is the
+    # durable source of truth, this only bridges a turn's lifetime.
+    STREAM_EVENT_LOG_MAXLEN: int = 2000
+    STREAM_EVENT_LOG_TTL_SECONDS: int = 900
+    # Upper bound for a resumable (message_id-scoped) stream connection.
+    STREAM_MAX_CONNECTION_SECONDS: float = 600.0
 
     # Cache TTL configuration
     CACHE_TTL_SECONDS: int = 3600
