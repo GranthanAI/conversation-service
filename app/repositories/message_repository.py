@@ -115,6 +115,31 @@ class CassandraMessageRepository:
             ))
         return messages
 
+    def get_message(self, conversation_id: UUID, message_id: UUID) -> Optional[Message]:
+        """Fetches a single message row, or None."""
+        cql = """
+            SELECT sender, content, created_at, status, file_ids
+            FROM messages_by_conversation
+            WHERE conversation_id = ? AND message_id = ?
+        """
+        stmt = self._get_prepared("get_msg", cql)
+        row = self.manager.session.execute(stmt, (conversation_id, message_id)).one()
+        if row is None:
+            return None
+        try:
+            status = MessageStatus(row.status)
+        except ValueError:  # e.g. 'deleted'
+            status = MessageStatus.FAILED
+        return Message(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            sender=row.sender,
+            content=row.content,
+            created_at=row.created_at,
+            status=status,
+            file_ids=list(row.file_ids) if row.file_ids else [],
+        )
+
     def delete(self, conversation_id: UUID, message_id: UUID) -> bool:
         """
         Soft deletes a message.

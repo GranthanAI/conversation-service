@@ -60,10 +60,19 @@ async def test_message_service_send_writes_to_outbox(mock_repos):
         status=MessageStatus.SENT
     )
     
-    service = MessageService(repo=mock_msg_repo)
-    await service.send(conv_id, msg_id, "user", "Hello Outbox")
+    redis = MagicMock()
+    redis.set, redis.zadd = AsyncMock(), AsyncMock()
+    cache = MagicMock()
+    cache.redis = redis
+    cache.delete_last_50_messages = AsyncMock()
+    service = MessageService(repo=mock_msg_repo, cache_service=cache)
+    result = await service.send(conv_id, msg_id, "user", "Hello Outbox")
 
     mock_msg_repo.create_with_outbox.assert_called_once()
+    published = json.loads(mock_msg_repo.create_with_outbox.call_args.kwargs["outbox_payload"])
+    assert published["message_id"] == str(msg_id)
+    assert published["response_message_id"] == str(result.response_message_id)
+    assert published["response_message_id"] != published["message_id"]
 
 @pytest.mark.anyio
 @patch("app.workers.outbox_worker.CassandraOutboxRepository")

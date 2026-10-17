@@ -119,6 +119,22 @@ async def start_kafka_consumer():
         logger.error("Fatal error in background Kafka consumer loop", error=str(e))
 
 
+def _response_message_id(event: dict, kind: str):
+    """Parses the assistant message id from a llm-service response event.
+
+    Returns None - and the caller ignores the event - when it is absent or not a UUID.
+    There is deliberately NO fallback to `message_id` / `request_message_id`: those are
+    the request's identity (the user's message), and writing the reply under them would
+    overwrite the user's own row. An ignored turn is failed cleanly by the pending
+    timeout instead (this is the rollout path for events produced by llm-service < 2.1)."""
+    raw = event.get("response_message_id")
+    try:
+        return UUID(str(raw)) if raw else None
+    except ValueError:
+        logger.error(f"{kind} has an invalid response_message_id; ignoring.", response_message_id=raw)
+        return None
+
+
 async def _handle_chat_response_chunk(
     event: dict,
     inbox_repo: CassandraInboxRepository,
@@ -127,24 +143,31 @@ async def _handle_chat_response_chunk(
     """
     Handles a flat chat.response.chunk event published by llm-service.
     Forwards the chunk to Redis PubSub so the SSE stream can deliver it.
+
+    SSE `message_id` is the ASSISTANT message (response_message_id); the request's
+    id travels separately as `request_message_id`.
     """
-    message_id = event.get("message_id")
+    response_id = _response_message_id(event, "chat.response.chunk")
     conversation_id_str = event.get("conversation_id")
     sequence_number = event.get("sequence_number")
 
-    if not message_id or not conversation_id_str:
-        logger.warning("chat.response.chunk missing required fields. Skipping.", event=event)
+    if not response_id or not conversation_id_str:
+        logger.warning(
+            "chat.response.chunk without response_message_id or conversation_id. Ignoring.",
+            request_message_id=event.get("message_id"), conversation_id=conversation_id_str,
+        )
         return
 
-    dedup_id = _derive_event_id("chat.response.chunk", str(message_id), str(sequence_number))
+    dedup_id = _derive_event_id("chat.response.chunk", str(response_id), str(sequence_number))
     if inbox_repo.exists(dedup_id):
-        logger.info("Duplicate chat.response.chunk skipped via inbox dedup.", message_id=message_id)
+        logger.info("Duplicate chat.response.chunk skipped via inbox dedup.", message_id=str(response_id))
         return
 
     conversation_id = UUID(conversation_id_str)
     await stream_service.publish_token(conversation_id, {
         "conversation_id": conversation_id_str,
-        "message_id": message_id,
+        "message_id": str(response_id),
+        "request_message_id": event.get("message_id"),
         "sender": "assistant",
         "content": event.get("content", ""),
         "sequence_number": sequence_number,
@@ -167,34 +190,48 @@ async def _handle_chat_response_generated(
     Handles a flat chat.response.generated event published by llm-service.
     On success, persists the final assistant message to Cassandra. On error,
     marks the message failed and pushes a terminal SSE error event.
+
+    The reply is written to, and the timeout marker cleared for, the ASSISTANT message
+    id (response_message_id) that send()/regenerate() allocated - never the request id.
     """
-    message_id = event.get("request_message_id") or event.get("message_id")
+    response_id = _response_message_id(event, "chat.response.generated")
+    request_message_id = event.get("request_message_id") or event.get("message_id")
     conversation_id_str = event.get("conversation_id")
 
-    if not message_id or not conversation_id_str:
-        logger.warning("chat.response.generated missing required fields. Skipping.", event=event)
+    if not response_id or not conversation_id_str:
+        logger.error(
+            "chat.response.generated without response_message_id or conversation_id "
+            "(legacy llm-service < 2.1?). Ignoring; the pending timeout will fail this turn.",
+            request_message_id=request_message_id, conversation_id=conversation_id_str,
+        )
         return
 
-    dedup_id = _derive_event_id("chat.response.generated", str(message_id))
+    dedup_id = _derive_event_id("chat.response.generated", str(response_id))
     if inbox_repo.exists(dedup_id):
-        logger.info("Duplicate chat.response.generated skipped via inbox dedup.", message_id=message_id)
+        logger.info("Duplicate chat.response.generated skipped via inbox dedup.", message_id=str(response_id))
         return
 
     conversation_id = UUID(conversation_id_str)
     status = event.get("status", "success")
-    # Terminal event received: the turn is answered (successfully or not), so the
-    # timeout worker must not fire for it later.
-    await msg_service.clear_pending_response(UUID(message_id))
+    base_payload = {
+        "conversation_id": conversation_id_str,
+        "message_id": str(response_id),
+        "request_message_id": request_message_id,
+        "sender": "assistant",
+        "is_final": True,
+    }
 
     if status == "success":
         full_content = event.get("full_content") or ""
-        await msg_service.finalize_assistant_message(conversation_id, UUID(message_id), full_content)
+        written = await msg_service.finalize_assistant_message(conversation_id, response_id, full_content)
+        if written is None:
+            logger.error("chat.response.generated refused: response_message_id belongs to a non-assistant message.",
+                         message_id=str(response_id), conversation_id=conversation_id_str)
+            return
+        await msg_service.clear_pending_response(response_id)
         await stream_service.publish_token(conversation_id, {
-            "conversation_id": conversation_id_str,
-            "message_id": message_id,
-            "sender": "assistant",
+            **base_payload,
             "content": "",
-            "is_final": True,
             "status": "completed",
             # Retrieval sources (file/page/section) for grounded answers; not
             # persisted with the message, so only the live stream carries them.
@@ -204,25 +241,20 @@ async def _handle_chat_response_generated(
             # streamed buffer with this complete text.
             "full_content": full_content,
         })
-        logger.info("Processed successful chat.response.generated from Kafka", message_id=message_id)
+        logger.info("Processed successful chat.response.generated from Kafka", message_id=str(response_id))
     else:
         error_message = event.get("error_message") or "Generation failed."
-        msg_service.repo.create_message_direct(
-            conversation_id=conversation_id,
-            message_id=UUID(message_id),
-            sender="assistant",
-            content=error_message,
-            status="failed",
-        )
-        await msg_service._invalidate_cache(conversation_id)
+        written = await msg_service.fail_assistant_message(conversation_id, response_id, error_message)
+        if written is None:
+            logger.error("chat.response.generated (error) refused: response_message_id belongs to a non-assistant message.",
+                         message_id=str(response_id), conversation_id=conversation_id_str)
+            return
+        await msg_service.clear_pending_response(response_id)
         await stream_service.publish_token(conversation_id, {
-            "conversation_id": conversation_id_str,
-            "message_id": message_id,
-            "sender": "assistant",
+            **base_payload,
             "content": error_message,
-            "is_final": True,
             "status": "failed",
         })
-        logger.warning("Processed error chat.response.generated from Kafka", message_id=message_id, error=error_message)
+        logger.warning("Processed error chat.response.generated from Kafka", message_id=str(response_id), error=error_message)
 
     inbox_repo.save(dedup_id)

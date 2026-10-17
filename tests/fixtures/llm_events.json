@@ -1,23 +1,45 @@
 {
+  "request": {
+    "event_type": "chat.message.created",
+    "schema_version": "2.1",
+    "message_id": "00000000-0000-7000-8000-0000000000a1",
+    "response_message_id": "00000000-0000-7000-8000-0000000000a2",
+    "conversation_id": "00000000-0000-7000-8000-0000000000c1",
+    "user_id": "00000000-0000-4000-8000-0000000000b1",
+    "content": "What does the handbook say?",
+    "mode_hint": null,
+    "selected_tools": [],
+    "file_ids": [
+      "00000000-0000-4000-8000-0000000000f1"
+    ],
+    "metadata": {},
+    "trace_context": {
+      "traceparent": "",
+      "tracestate": ""
+    },
+    "timestamp": "2026-10-17T07:03:04.892324Z"
+  },
   "chunk": {
     "event_type": "chat.response.chunk",
-    "schema_version": "2.0",
-    "conversation_id": "c-1",
-    "user_id": "u-1",
-    "message_id": "m-1",
+    "schema_version": "2.1",
+    "conversation_id": "00000000-0000-7000-8000-0000000000c1",
+    "user_id": "00000000-0000-4000-8000-0000000000b1",
+    "message_id": "00000000-0000-7000-8000-0000000000a1",
+    "response_message_id": "00000000-0000-7000-8000-0000000000a2",
     "chunk_index": 0,
     "sequence_number": 1,
     "content": "Hel",
     "is_last": false,
-    "timestamp": "2026-10-16T18:48:42.487350Z"
+    "timestamp": "2026-10-17T07:03:04.892324Z"
   },
   "final": {
     "event_type": "chat.response.generated",
-    "schema_version": "2.0",
-    "response_id": "r-1",
-    "conversation_id": "c-1",
-    "user_id": "u-1",
-    "request_message_id": "m-1",
+    "schema_version": "2.1",
+    "response_id": "resp_abc",
+    "conversation_id": "00000000-0000-7000-8000-0000000000c1",
+    "user_id": "00000000-0000-4000-8000-0000000000b1",
+    "request_message_id": "00000000-0000-7000-8000-0000000000a1",
+    "response_message_id": "00000000-0000-7000-8000-0000000000a2",
     "full_content": "Hello world",
     "provider": "nvidia",
     "generation_fallback_used": false,
@@ -50,17 +72,18 @@
     "status": "success",
     "error_code": null,
     "error_message": null,
-    "timestamp": "2026-10-16T18:48:42.487880Z"
+    "timestamp": "2026-10-17T07:03:04.892324Z"
   },
   "error": {
     "event_type": "chat.response.generated",
-    "schema_version": "2.0",
-    "response_id": "r-2",
-    "conversation_id": "c-1",
-    "user_id": "u-1",
-    "request_message_id": "m-2",
+    "schema_version": "2.1",
+    "response_id": "resp_00000000-0000-7000-8000-0000000000a1",
+    "conversation_id": "00000000-0000-7000-8000-0000000000c1",
+    "user_id": "00000000-0000-4000-8000-0000000000b1",
+    "request_message_id": "00000000-0000-7000-8000-0000000000a1",
+    "response_message_id": "00000000-0000-7000-8000-0000000000a2",
     "full_content": null,
-    "provider": "nvidia",
+    "provider": null,
     "generation_fallback_used": false,
     "mode": "default",
     "skill": "general_chat",
@@ -82,8 +105,8 @@
       "tracestate": ""
     },
     "status": "error",
-    "error_code": "X",
-    "error_message": "boom",
-    "timestamp": "2026-10-16T18:48:42.487880Z"
+    "error_code": "UNEXPECTED_ERROR",
+    "error_message": "An unexpected error occurred while processing your request.",
+    "timestamp": "2026-10-17T07:03:04.892324Z"
   }
 }

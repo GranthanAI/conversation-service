@@ -40,6 +40,16 @@ class MockRedis:
     async def expire(self, key, ttl):
         return 1
 
+    async def zadd(self, name, mapping):
+        self.store.setdefault(("zset", name), {}).update(mapping)
+        return len(mapping)
+
+    async def zrem(self, name, member):
+        return 1 if self.store.get(("zset", name), {}).pop(member, None) is not None else 0
+
+    async def zrangebyscore(self, name, min, max):
+        return [m for m, s in self.store.get(("zset", name), {}).items() if min <= s <= max]
+
 @pytest.fixture(autouse=True)
 def mock_redis_client(request):
     if "integration" in request.node.fspath.strpath:

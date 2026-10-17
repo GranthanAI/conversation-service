@@ -111,6 +111,7 @@ async def test_consumer_loop_processes_chat_response_generated_success(
 
     mock_msg_repo = MagicMock()
     mock_msg_repo.create_message_direct.return_value = MagicMock()
+    mock_msg_repo.get_message.return_value = None
     mock_msg_repo_class.return_value = mock_msg_repo
 
     mock_cache_service = AsyncMock()
@@ -120,7 +121,8 @@ async def test_consumer_loop_processes_chat_response_generated_success(
     mock_stream_service_class.return_value = mock_stream_service
 
     conv_id = uuid.uuid4()
-    msg_id = uuid.uuid4()
+    msg_id = uuid.uuid4()  # request / user message id
+    resp_id = uuid.uuid4()  # pending assistant message id
 
     # Flat, envelope-less shape matching llm-service's ChatResponseGeneratedEvent
     event_payload = {
@@ -129,6 +131,7 @@ async def test_consumer_loop_processes_chat_response_generated_success(
         "conversation_id": str(conv_id),
         "user_id": str(uuid.uuid4()),
         "request_message_id": str(msg_id),
+        "response_message_id": str(resp_id),
         "full_content": "Final AI response text content",
         "status": "success",
     }
@@ -145,7 +148,7 @@ async def test_consumer_loop_processes_chat_response_generated_success(
 
     mock_msg_repo.create_message_direct.assert_called_once_with(
         conversation_id=conv_id,
-        message_id=msg_id,
+        message_id=resp_id,
         sender="assistant",
         content="Final AI response text content",
         status="sent"
@@ -175,6 +178,7 @@ async def test_consumer_loop_processes_chat_response_generated_error(
     mock_inbox_repo_class.return_value = mock_inbox_repo
 
     mock_msg_repo = MagicMock()
+    mock_msg_repo.get_message.return_value = None
     mock_msg_repo_class.return_value = mock_msg_repo
 
     mock_cache_service = AsyncMock()
@@ -184,12 +188,14 @@ async def test_consumer_loop_processes_chat_response_generated_error(
     mock_stream_service_class.return_value = mock_stream_service
 
     conv_id = uuid.uuid4()
-    msg_id = uuid.uuid4()
+    msg_id = uuid.uuid4()  # request / user message id
+    resp_id = uuid.uuid4()  # pending assistant message id
 
     event_payload = {
         "event_type": "chat.response.generated",
         "conversation_id": str(conv_id),
         "request_message_id": str(msg_id),
+        "response_message_id": str(resp_id),
         "status": "error",
         "error_message": "Upstream provider failure",
     }
@@ -206,7 +212,7 @@ async def test_consumer_loop_processes_chat_response_generated_error(
 
     mock_msg_repo.create_message_direct.assert_called_once_with(
         conversation_id=conv_id,
-        message_id=msg_id,
+        message_id=resp_id,
         sender="assistant",
         content="Upstream provider failure",
         status="failed"
@@ -243,12 +249,14 @@ async def test_consumer_loop_forwards_chat_response_chunk(
     mock_stream_service_class.return_value = mock_stream_service
 
     conv_id = uuid.uuid4()
-    msg_id = uuid.uuid4()
+    msg_id = uuid.uuid4()  # request / user message id
+    resp_id = uuid.uuid4()  # pending assistant message id
 
     event_payload = {
         "event_type": "chat.response.chunk",
         "conversation_id": str(conv_id),
         "message_id": str(msg_id),
+        "response_message_id": str(resp_id),
         "chunk_index": 0,
         "sequence_number": 1,
         "content": "Hello",
@@ -269,6 +277,8 @@ async def test_consumer_loop_forwards_chat_response_chunk(
     published_conv_id, published_payload = mock_stream_service.publish_token.call_args.args
     assert published_conv_id == conv_id
     assert published_payload["content"] == "Hello"
+    assert published_payload["message_id"] == str(resp_id)
+    assert published_payload["request_message_id"] == str(msg_id)
     assert published_payload["is_final"] is False
     assert mock_consumer.committed is True
 

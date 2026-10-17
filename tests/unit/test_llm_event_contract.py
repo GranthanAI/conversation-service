@@ -1,20 +1,26 @@
-"""Contract test: the event payloads llm-service actually emits (fixtures are
-generated from its ChatResponseChunkEvent / ChatResponseGeneratedEvent models,
-tests/fixtures/llm_events.json) must drive this service's consumers correctly.
+"""Contract test: the event payloads llm-service actually emits (fixtures are generated
+from its ChatMessageCreatedEvent / ChatResponseChunkEvent / ChatResponseGeneratedEvent
+models and its real ErrorHandler, tests/fixtures/llm_events.json) must drive this
+service's consumers correctly, and this service's request payload must satisfy llm-service's
+request model.
 
-Regenerate the fixture whenever llm-service's response models change.
+Regenerate the fixture (run in llm-service) whenever its request/response models change.
 """
 
 import json
 import pathlib
+import uuid
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
 
 from app.events.consumers import _handle_chat_response_chunk, _handle_chat_response_generated
+from app.services.message_service import MessageService
 
 FIXTURES = json.loads((pathlib.Path(__file__).parent.parent / "fixtures" / "llm_events.json").read_text())
+REQ = FIXTURES["request"]["message_id"]
+RESP = FIXTURES["request"]["response_message_id"]
 
 pytestmark = pytest.mark.anyio
 
@@ -25,87 +31,106 @@ def _deps():
     stream = MagicMock()
     stream.publish_token = AsyncMock()
     msgs = MagicMock()
-    msgs.finalize_assistant_message = AsyncMock()
-    msgs._invalidate_cache = AsyncMock()
+    msgs.finalize_assistant_message = AsyncMock(return_value=object())
+    msgs.fail_assistant_message = AsyncMock(return_value=object())
     msgs.clear_pending_response = AsyncMock()
-    msgs.repo = MagicMock()
     return inbox, stream, msgs
 
 
-def _uuidify(event: dict) -> dict:
-    """Consumers parse conversation/message ids as UUIDs; map the fixture's
-    readable ids onto stable UUIDs without changing any other field."""
-    mapping = {"c-1": "00000000-0000-0000-0000-0000000000c1", "m-1": "00000000-0000-0000-0000-0000000000a1",
-               "m-2": "00000000-0000-0000-0000-0000000000a2"}
-    out = dict(event)
-    for key in ("conversation_id", "message_id", "request_message_id"):
-        if key in out:
-            out[key] = mapping[out[key]]
-    return out
+# ---- response direction: llm -> conversation ---------------------------------------
 
 
-async def test_chunk_event_is_forwarded_and_never_final():
+def test_fixture_distinguishes_request_and_response_identity():
+    assert REQ != RESP
+    for name in ("chunk", "final", "error"):
+        assert FIXTURES[name]["response_message_id"] == RESP, name
+    assert FIXTURES["chunk"]["message_id"] == REQ
+    assert FIXTURES["final"]["request_message_id"] == FIXTURES["error"]["request_message_id"] == REQ
+
+
+async def test_chunk_is_forwarded_under_the_assistant_message_and_never_final():
     inbox, stream, _ = _deps()
-    event = _uuidify(FIXTURES["chunk"])
-    await _handle_chat_response_chunk(event, inbox, stream)
+    await _handle_chat_response_chunk(dict(FIXTURES["chunk"]), inbox, stream)
     payload = stream.publish_token.call_args.args[1]
-    assert payload["content"] == "Hel"
-    assert payload["sequence_number"] == 1
+    assert payload["message_id"] == RESP and payload["request_message_id"] == REQ
+    assert payload["content"] == "Hel" and payload["sequence_number"] == 1
     assert payload["is_final"] is False
 
 
 async def test_last_chunk_does_not_end_the_turn():
     """The final event can overtake the last chunks, so is_last must not end the stream."""
     inbox, stream, _ = _deps()
-    event = _uuidify({**FIXTURES["chunk"], "is_last": True})
-    await _handle_chat_response_chunk(event, inbox, stream)
+    await _handle_chat_response_chunk({**FIXTURES["chunk"], "is_last": True}, inbox, stream)
     assert stream.publish_token.call_args.args[1]["is_final"] is False
 
 
-async def test_final_event_persists_full_content_and_carries_citations():
+async def test_final_event_persists_under_the_response_id_with_citations():
     inbox, stream, msgs = _deps()
-    event = _uuidify(FIXTURES["final"])
-    await _handle_chat_response_generated(event, inbox, msgs, stream)
+    await _handle_chat_response_generated(dict(FIXTURES["final"]), inbox, msgs, stream)
 
     msgs.finalize_assistant_message.assert_awaited_once()
     args = msgs.finalize_assistant_message.call_args.args
-    assert args[1] == UUID(event["request_message_id"])
+    assert args[1] == UUID(RESP), "must NOT be the request (user) message id"
     assert args[2] == "Hello world"
+    msgs.clear_pending_response.assert_awaited_once_with(UUID(RESP))
 
     payload = stream.publish_token.call_args.args[1]
+    assert payload["message_id"] == RESP and payload["request_message_id"] == REQ
     assert payload["is_final"] is True and payload["status"] == "completed"
     assert payload["full_content"] == "Hello world"
     assert payload["citations"][0]["source_name"] == "a.pdf"
     inbox.save.assert_called_once()
-    msgs.clear_pending_response.assert_awaited_once_with(UUID(event["request_message_id"]))
 
 
-async def test_error_event_marks_message_failed_and_terminates_stream():
+async def test_error_event_from_llm_error_handler_fails_the_assistant_message():
     inbox, stream, msgs = _deps()
-    event = _uuidify(FIXTURES["error"])
-    await _handle_chat_response_generated(event, inbox, msgs, stream)
+    await _handle_chat_response_generated(dict(FIXTURES["error"]), inbox, msgs, stream)
 
-    kwargs = msgs.repo.create_message_direct.call_args.kwargs
-    assert kwargs["status"] == "failed" and kwargs["content"] == "boom"
+    args = msgs.fail_assistant_message.call_args.args
+    assert args[1] == UUID(RESP)
+    msgs.clear_pending_response.assert_awaited_once_with(UUID(RESP))
     payload = stream.publish_token.call_args.args[1]
-    assert payload["is_final"] is True and payload["status"] == "failed"
-    msgs.clear_pending_response.assert_awaited_once()
+    assert payload["is_final"] is True and payload["status"] == "failed" and payload["message_id"] == RESP
 
 
 async def test_duplicate_final_event_is_not_reprocessed():
     inbox, stream, msgs = _deps()
     inbox.exists.return_value = True
-    await _handle_chat_response_generated(_uuidify(FIXTURES["final"]), inbox, msgs, stream)
+    await _handle_chat_response_generated(dict(FIXTURES["final"]), inbox, msgs, stream)
     msgs.finalize_assistant_message.assert_not_called()
-    stream.publish_token.assert_not_called()
     msgs.clear_pending_response.assert_not_called()
+    stream.publish_token.assert_not_called()
 
 
-@pytest.mark.parametrize("key", ["conversation_id", "message_id", "sequence_number", "content", "is_last"])
-def test_llm_chunk_event_still_provides_every_field_the_consumer_reads(key):
-    assert key in FIXTURES["chunk"]
+@pytest.mark.parametrize("kind", ["chunk", "final", "error"])
+async def test_legacy_event_without_response_message_id_is_ignored(kind):
+    inbox, stream, msgs = _deps()
+    legacy = {k: v for k, v in FIXTURES[kind if kind != "error" else "error"].items() if k != "response_message_id"}
+    if kind == "chunk":
+        await _handle_chat_response_chunk(legacy, inbox, stream)
+    else:
+        await _handle_chat_response_generated(legacy, inbox, msgs, stream)
+    msgs.finalize_assistant_message.assert_not_called()
+    msgs.fail_assistant_message.assert_not_called()
+    stream.publish_token.assert_not_called()
 
 
-@pytest.mark.parametrize("key", ["conversation_id", "request_message_id", "full_content", "status", "citations"])
-def test_llm_final_event_still_provides_every_field_the_consumer_reads(key):
-    assert key in FIXTURES["final"]
+# ---- request direction: conversation -> llm ------------------------------------------
+
+
+def test_request_payload_satisfies_llm_request_model():
+    """Every field in llm-service's request model fixture is present, with the same
+    types, in what MessageService publishes; the identity fields are distinct UUIDs."""
+    svc = MessageService(repo=MagicMock())
+    conv, req, resp = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    payload = svc._build_chat_message_created_payload(
+        conv, req, uuid.uuid4(), "hi", file_ids=[uuid.uuid4()], response_message_id=resp
+    )
+    llm_request = FIXTURES["request"]
+    missing = set(llm_request) - set(payload)
+    assert not missing, f"llm-service request model has fields we do not send: {missing}"
+    for key, value in llm_request.items():
+        assert isinstance(payload[key], type(value)) or payload[key] is None, key
+    assert payload["schema_version"] == llm_request["schema_version"] == "2.1"
+    assert payload["message_id"] == str(req) and payload["response_message_id"] == str(resp)
+    UUID(payload["message_id"]); UUID(payload["response_message_id"])

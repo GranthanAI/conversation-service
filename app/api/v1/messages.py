@@ -15,7 +15,7 @@ from app.security import (
     CurrentUser
 )
 from app.api.deps import get_message_service, get_idempotency_service
-from app.services.message_service import MessageService
+from app.services.message_service import MessageService, PendingResponseRegistrationError
 from app.services.idempotency_service import IdempotencyService
 from app.models.conversation import Conversation
 from app.schemas.message import (
@@ -67,7 +67,8 @@ async def create_message(
                 content=cached_data["content"],
                 created_at=datetime.fromisoformat(cached_data["created_at"]),
                 status=cached_data["status"],
-                file_ids=[UUID(fid) for fid in cached_data.get("file_ids", [])]
+                file_ids=[UUID(fid) for fid in cached_data.get("file_ids", [])],
+                response_message_id=UUID(cached_data["response_message_id"]) if cached_data.get("response_message_id") else None,
             )
 
     # Process normally
@@ -86,6 +87,12 @@ async def create_message(
     except Exception as e:
         if x_idempotency_key:
             await idempotency_service.remove_lock(x_idempotency_key)
+        if isinstance(e, PendingResponseRegistrationError):
+            # Nothing was dispatched (placeholder rolled back); the client may retry.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Could not register the response for tracking; message not sent. Please retry.",
+            )
         raise e
 
     if x_idempotency_key:
@@ -96,7 +103,8 @@ async def create_message(
             "content": msg.content,
             "created_at": msg.created_at.isoformat(),
             "status": msg.status.value,
-            "file_ids": [str(fid) for fid in msg.file_ids]
+            "file_ids": [str(fid) for fid in msg.file_ids],
+            "response_message_id": str(msg.response_message_id) if msg.response_message_id else None,
         }
         await idempotency_service.save_response(x_idempotency_key, response_data)
 
@@ -141,7 +149,13 @@ async def regenerate_message(
     """
     Triggers regeneration of an assistant message (requires ownership).
     """
-    msg = await service.regenerate(conversation_id=conversation_id, message_id=message_id)
+    try:
+        msg = await service.regenerate(conversation_id=conversation_id, message_id=message_id)
+    except PendingResponseRegistrationError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not register the response for tracking; regeneration not started. Please retry.",
+        )
     if not msg:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

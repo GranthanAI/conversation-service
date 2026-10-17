@@ -7,6 +7,23 @@ import time
 import os
 import uuid
 
+def uuidv7_after(floor: uuid.UUID) -> uuid.UUID:
+    """A UUIDv7 strictly greater than `floor`.
+
+    History is clustered by message_id DESC, so an assistant reply must compare
+    greater than the user message it answers. Two UUIDv7s minted in the same
+    millisecond have random low bits and can compare either way, so retry (and, if
+    the clock is behind `floor`, advance past it) until the invariant holds.
+    """
+    for _ in range(64):
+        candidate = uuidv7()
+        if candidate.int > floor.int:
+            return candidate
+        time.sleep(0.001)
+    # Clock behind the floor's timestamp: build directly above it.
+    return uuid.UUID(int=min(floor.int + 1, (1 << 128) - 1))
+
+
 def uuidv7() -> uuid.UUID:
     """
     Generates a compliant, chronological RFC 9562 UUIDv7.

@@ -48,14 +48,22 @@ async def test_conversation_lifecycle_api():
         msg_headers = {**headers, "X-Idempotency-Key": str(uuid.uuid4())}
         res = await client.post(f"/v1/conversations/{conv_id}/messages", json=msg_payload, headers=msg_headers)
         assert res.status_code == 202
-        assert res.json()["sender"] == "user"
+        posted = res.json()
+        assert posted["sender"] == "user"
+        # The client is told which assistant message the reply will stream under.
+        assert posted["response_message_id"] and posted["response_message_id"] != posted["message_id"]
         
-        # 4. List messages history
+        # 4. List messages history (newest first): the pending assistant reply sorts
+        # ahead of the question it answers, and the user's own row is intact.
         res = await client.get(f"/v1/conversations/{conv_id}/messages", headers=headers)
         assert res.status_code == 200
         history = res.json()["items"]
-        assert len(history) >= 1
-        assert history[0]["content"] == "Hello E2E endpoint"
+        assert len(history) >= 2
+        assert history[0]["sender"] == "assistant" and history[0]["status"] == "pending"
+        assert history[0]["message_id"] == posted["response_message_id"]
+        user_rows = [m for m in history if m["sender"] == "user"]
+        assert [m["content"] for m in user_rows] == ["Hello E2E endpoint"]
+        assert user_rows[0]["message_id"] == posted["message_id"]
         
         # 5. Delete Conversation (Soft Delete)
         res = await client.delete(f"/v1/conversations/{conv_id}", headers=headers)

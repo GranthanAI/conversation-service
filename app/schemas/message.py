@@ -37,6 +37,9 @@ class MessageResponse(BaseModel):
     created_at: datetime
     status: str
     file_ids: List[UUID] = Field(default_factory=list)
+    # Present on POST .../messages and .../regenerate: the assistant message that the
+    # reply streams under (SSE `message_id`). Distinct from `message_id`.
+    response_message_id: Optional[UUID] = None
 
     model_config = {"from_attributes": True}
 
