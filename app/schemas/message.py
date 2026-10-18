@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 # Tool ids are registry names (e.g. web_search). Shape-checked here; whether a tool exists and is
 # enabled is decided by llm-service (the registry owner) before anything runs.
 _TOOL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
-MAX_SELECTED_TOOLS = 10
+MAX_SELECTED_TOOLS = 5  # must equal llm-service app/tools/selection.py MAX_SELECTED_TOOLS
 
 class CreateMessageRequest(BaseModel):
     """
