@@ -243,3 +243,16 @@ def test_api_reset(client):
     client.patch("/v1/preferences", json={"tone": "simple"}, headers=h)
     r = client.delete("/v1/preferences", headers=h)
     assert r.status_code == 200 and r.json()["tone"] == "professional" and r.json()["version"] == 0
+
+
+def test_hinglish_is_a_valid_persisted_language_and_reaches_the_generation_preferences():
+    from app.models.preferences import PreferencesUpdate, SUPPORTED_LANGUAGES, UserPreferences, generation_preferences, preference_options
+
+    assert "hinglish" in SUPPORTED_LANGUAGES
+    assert any(l["code"] == "hinglish" for l in preference_options()["languages"])
+    assert PreferencesUpdate(language="hinglish").changes()["language"] == "hinglish"
+    p = UserPreferences.from_row({"language": "hinglish"})
+    assert p.language == "hinglish"
+    g = generation_preferences(p)
+    assert g["language"] == "hinglish" and g["language_name"] == "Hinglish"
+    assert UserPreferences.from_row({"language": "klingon"}).language == "auto"   # unknown still falls back

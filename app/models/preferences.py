@@ -43,11 +43,15 @@ class DocumentContext(str, Enum):
     ATTACHED_ONLY = "attached_only"
 
 
+# Short name used in the generation prompt when it differs from the display name.
+_LANGUAGE_PROMPT_NAME = {"hinglish": "Hinglish"}
+
 # Response languages offered to users. "auto" = answer in the language of the question.
 SUPPORTED_LANGUAGES: dict[str, str] = {
     "auto": "Auto (match my message)",
     "en": "English",
     "hi": "Hindi",
+    "hinglish": "Hinglish (Hindi in English script, mixed with English)",
     "bn": "Bengali",
     "mr": "Marathi",
     "ta": "Tamil",
@@ -246,7 +250,7 @@ def generation_preferences(prefs: UserPreferences) -> dict:
         "answer_length": prefs.answer_length.value,
         "tone": prefs.tone.value,
         "language": prefs.language,
-        "language_name": SUPPORTED_LANGUAGES.get(prefs.language, prefs.language),
+        "language_name": _LANGUAGE_PROMPT_NAME.get(prefs.language) or SUPPORTED_LANGUAGES.get(prefs.language, prefs.language),
         "personal_instructions": prefs.personal_instructions,
         "citations": prefs.citations.value,
     }
