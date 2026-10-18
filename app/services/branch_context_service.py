@@ -20,7 +20,7 @@ Authoritative rules (every client gets the same ones, enforced here, not in the 
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from uuid import UUID
 
 from app.core.logging import logger
@@ -106,10 +106,29 @@ class BranchContextService:
                 rows = [m for m in rows if m.created_at <= seg.upto_time]
         return [m for m in rows if _usable(m)]
 
-    async def inherited_history(self, conv: Conversation) -> List[dict]:
-        """Ancestor messages for the model, oldest-first: [{role, content, conversation_id, message_id}]."""
+    @staticmethod
+    def ancestor_refs(lineage: Lineage) -> List[dict]:
+        """Branch lineage for downstream services (root first): each ancestor with the last message of it
+        that is in scope at the branch point. Ancestors without a recorded branch message (legacy branches)
+        are omitted, since downstream consumers could not prove what the branch may see."""
+        return [
+            {"conversation_id": str(s.conversation_id), "upto_message_id": str(s.upto_message_id)}
+            for s in lineage.segments if s.upto_message_id is not None
+        ]
+
+    async def event_context(self, conv: Conversation) -> Tuple[List[dict], List[dict]]:
+        """(inherited history, ancestor refs) for the request event, resolving the lineage once."""
         try:
             lineage = await self.lineage(conv)
+        except Exception as e:
+            logger.warning("Could not resolve lineage", conversation_id=str(conv.conversation_id), error=str(e))
+            return [], []
+        return await self.inherited_history(conv, lineage), self.ancestor_refs(lineage)
+
+    async def inherited_history(self, conv: Conversation, lineage: Optional[Lineage] = None) -> List[dict]:
+        """Ancestor messages for the model, oldest-first: [{role, content, conversation_id, message_id}]."""
+        try:
+            lineage = lineage or await self.lineage(conv)
             picked: List[Message] = []
             seen: set = set()
             chars = INHERITED_MAX_CHARS

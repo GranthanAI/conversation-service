@@ -262,3 +262,17 @@ async def test_request_event_history_marks_inherited_turns(abc):
     assert out[:4] == inherited and "inherited" not in out[-1]
     # a root conversation is untouched
     assert await svc._with_inherited_history(a, own) == own
+
+
+async def test_event_carries_branch_lineage_with_boundaries_and_omits_legacy_branches(abc):
+    from app.services.message_service import MessageService
+
+    s, a, b, c = abc
+    svc = MessageService(repo=None, branch_context=_svc(s))
+    history, ancestors = await svc._branch_event_context(c, [])
+    assert [(x["conversation_id"], x["upto_message_id"]) for x in ancestors] == [
+        (str(a), str(s.convs[b].branch_message_id)), (str(b), str(s.convs[c].branch_message_id))]
+    assert len(history) == 4
+    legacy = s.conv("legacy", parent=a, branch=None)
+    assert (await svc._branch_event_context(legacy, []))[1] == []        # no boundary recorded: nothing to prove
+    assert (await svc._branch_event_context(a, []))[1] == []             # root conversation

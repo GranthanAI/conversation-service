@@ -84,6 +84,7 @@ class MessageService:
         history: Optional[List[dict]] = None,
         preferences: Optional[dict] = None,
         defaults_applied: Optional[dict] = None,
+        ancestors: Optional[List[dict]] = None,
     ) -> dict:
         """
         Builds the flat chat.message.created payload matching llm-service's
@@ -124,6 +125,9 @@ class MessageService:
             # Recent turns before this request (oldest first), so llm-service has the conversation even when
             # the memory service is slow or down. Optional and additive: older consumers ignore it.
             "history": history or [],
+            # Branch lineage with boundaries (root first): lets other services apply the same branch point to
+            # summaries. Empty for a root conversation.
+            "ancestors": ancestors or [],
             "preferences": preferences or {},
             "defaults_applied": defaults_applied or {"mode": False, "tools": False},
             "metadata": metadata or {},
@@ -161,8 +165,9 @@ class MessageService:
         event_id = uuid.uuid1()
         # Read BEFORE this turn's rows exist, so the history is strictly what came earlier.
         history = await self._recent_history(conversation_id) if sender == "user" else []
+        ancestors: List[dict] = []
         if sender == "user" and self.branch_context is not None:
-            history = await self._with_inherited_history(conversation_id, history)
+            history, ancestors = await self._branch_event_context(conversation_id, history)
         resolved = self._resolve_preferences(user_id, mode, selected_tools)
         payload = self._build_chat_message_created_payload(
             conversation_id, message_id, user_id, content, resolved.mode, resolved.selected_tools, file_ids,
@@ -170,6 +175,7 @@ class MessageService:
             history=history,
             preferences=resolved.generation,
             defaults_applied=resolved.defaults_applied,
+            ancestors=ancestors,
         )
 
         if response_message_id:
@@ -208,19 +214,25 @@ class MessageService:
         return self._format_history(msgs)
 
     async def _with_inherited_history(self, conversation_id: UUID, own: List[dict]) -> List[dict]:
-        """Prepends what this branch inherits from its ancestors (up to each branch point), marked
-        `inherited` with the conversation it came from. Best effort: never blocks sending."""
+        history, _ancestors = await self._branch_event_context(conversation_id, own)
+        return history
+
+    async def _branch_event_context(self, conversation_id: UUID, own: List[dict]) -> tuple:
+        """(history, ancestors) for the request event. History = what this branch inherits from its ancestors
+        (up to each branch point, marked `inherited` with its source conversation) followed by its own turns;
+        ancestors = the branch lineage with boundaries, so other services can apply the same boundaries to
+        summaries. Best effort: never blocks sending."""
         try:
             conv = await self.branch_context.conversations.get(conversation_id)
             if conv is None or not conv.parent_conversation_id:
-                return own
-            inherited = await self.branch_context.inherited_history(conv)
+                return own, []
+            inherited, ancestors = await self.branch_context.event_context(conv)
         except Exception as e:
             logger.warning("Could not attach inherited history", conversation_id=str(conversation_id), error=str(e))
-            return own
+            return own, []
         marked = [{"role": h["role"], "content": h["content"], "inherited": True,
                    "source_conversation_id": h["conversation_id"]} for h in inherited]
-        return marked + own
+        return marked + own, ancestors
 
     @staticmethod
     def _format_history(messages_newest_first: List[Message]) -> List[dict]:
