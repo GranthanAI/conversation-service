@@ -18,6 +18,7 @@ from app.clients.kafka_producer import KafkaProducerClient
 from app.core.config import settings
 from app.middleware.correlation import get_correlation_id
 from app.utils.helpers import uuidv7, uuidv7_after
+from app.services.preferences_service import PreferencesService, ResolvedMessagePreferences
 
 
 class PendingResponseRegistrationError(Exception):
@@ -42,11 +43,22 @@ class MessageService:
         self,
         repo: CassandraMessageRepository,
         cache_service: Optional[CacheService] = None,
-        producer_client: Optional[KafkaProducerClient] = None
+        producer_client: Optional[KafkaProducerClient] = None,
+        preferences_service: Optional["PreferencesService"] = None,
     ):
         self.repo = repo
         self.cache = cache_service
         self.producer = producer_client
+        # Optional: without it messages carry no saved defaults (built-in behaviour).
+        self.preferences = preferences_service
+
+    def _resolve_preferences(
+        self, user_id: Optional[UUID], mode: Optional[str], selected_tools: Optional[List[str]]
+    ) -> ResolvedMessagePreferences:
+        if self.preferences is None:
+            return ResolvedMessagePreferences(mode=mode, selected_tools=selected_tools,
+                                              defaults_applied={"mode": False, "tools": False})
+        return self.preferences.resolve_for_message(user_id, mode, selected_tools)
 
     async def _invalidate_cache(self, conversation_id: UUID):
         """
@@ -67,6 +79,8 @@ class MessageService:
         response_message_id: Optional[UUID] = None,
         metadata: Optional[dict] = None,
         history: Optional[List[dict]] = None,
+        preferences: Optional[dict] = None,
+        defaults_applied: Optional[dict] = None,
     ) -> dict:
         """
         Builds the flat chat.message.created payload matching llm-service's
@@ -81,12 +95,21 @@ class MessageService:
                                 allocated here before dispatch. llm-service echoes it
                                 unchanged on every chunk / final / error event.
         file_ids are the attached File Service document_ids.
+
+        Preferences (schema_version 2.2, additive; older consumers ignore them):
+          mode_hint / selected_tools   already resolved: the message's explicit choice, or
+                                       the user's saved default when the message had none.
+          defaults_applied             {"mode": bool, "tools": bool}: which of the two came
+                                       from saved defaults (llm-service skips an unavailable
+                                       default instead of rejecting the message).
+          preferences                  generation preferences (length, tone, language,
+                                       personal instructions, citations) at send time.
         """
         now = datetime.now(timezone.utc).isoformat()
         correlation_id = get_correlation_id()
         return {
             "event_type": "chat.message.created",
-            "schema_version": "2.1",
+            "schema_version": "2.2",
             "message_id": str(message_id),
             "response_message_id": str(response_message_id) if response_message_id else None,
             "conversation_id": str(conversation_id),
@@ -98,6 +121,8 @@ class MessageService:
             # Recent turns before this request (oldest first), so llm-service has the conversation even when
             # the memory service is slow or down. Optional and additive: older consumers ignore it.
             "history": history or [],
+            "preferences": preferences or {},
+            "defaults_applied": defaults_applied or {"mode": False, "tools": False},
             "metadata": metadata or {},
             "trace_context": {"traceparent": correlation_id, "tracestate": ""},
             "timestamp": now,
@@ -133,10 +158,13 @@ class MessageService:
         event_id = uuid.uuid1()
         # Read BEFORE this turn's rows exist, so the history is strictly what came earlier.
         history = await self._recent_history(conversation_id) if sender == "user" else []
+        resolved = self._resolve_preferences(user_id, mode, selected_tools)
         payload = self._build_chat_message_created_payload(
-            conversation_id, message_id, user_id, content, mode, selected_tools, file_ids,
+            conversation_id, message_id, user_id, content, resolved.mode, resolved.selected_tools, file_ids,
             response_message_id=response_message_id,
             history=history,
+            preferences=resolved.generation,
+            defaults_applied=resolved.defaults_applied,
         )
 
         if response_message_id:
@@ -291,7 +319,7 @@ class MessageService:
             return True
         return False
 
-    async def regenerate(self, conversation_id: UUID, message_id: UUID) -> Optional[Message]:
+    async def regenerate(self, conversation_id: UUID, message_id: UUID, user_id: Optional[UUID] = None) -> Optional[Message]:
         """
         Regenerates an assistant message.
 
@@ -329,8 +357,15 @@ class MessageService:
 
         # Carries the original prompt's file_ids forward so a regenerated response is
         # re-derived against the same attached documents.
+        owner_id = user_id or prompt_user_id
+        # A regeneration carries no explicit mode/tool choice: the saved defaults apply.
+        resolved = self._resolve_preferences(owner_id, None, None)
         payload = self._build_chat_message_created_payload(
-            conversation_id, request_id, prompt_user_id, prompt_content,
+            conversation_id, request_id, owner_id, prompt_content,
+            mode=resolved.mode,
+            selected_tools=resolved.selected_tools,
+            preferences=resolved.generation,
+            defaults_applied=resolved.defaults_applied,
             file_ids=prompt_msg.file_ids if prompt_msg else None,
             response_message_id=response_message_id,
             history=self._format_history(older_than_prompt),

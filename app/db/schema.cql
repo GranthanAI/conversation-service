@@ -63,3 +63,22 @@ CREATE TABLE IF NOT EXISTS inbox_events (
     processed_at timestamp,
     PRIMARY KEY (event_id)
 ) WITH default_time_to_live = 604800;
+
+-- User AI / application preferences (one row per user; this service is the
+-- authoritative owner). Values are validated by the API; `version` backs
+-- optimistic concurrency (conditional updates). Additive: apply with
+-- `make schema` (CREATE TABLE IF NOT EXISTS is safe on an existing keyspace).
+CREATE TABLE IF NOT EXISTS user_preferences (
+    user_id uuid,
+    default_mode text,
+    default_tools list<text>,
+    answer_length text,
+    tone text,
+    language text,
+    personal_instructions text,
+    citations text,
+    document_context text,
+    version int,
+    updated_at timestamp,
+    PRIMARY KEY (user_id)
+);

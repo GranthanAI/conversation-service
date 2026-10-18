@@ -150,7 +150,7 @@ async def regenerate_message(
     Triggers regeneration of an assistant message (requires ownership).
     """
     try:
-        msg = await service.regenerate(conversation_id=conversation_id, message_id=message_id)
+        msg = await service.regenerate(conversation_id=conversation_id, message_id=message_id, user_id=conv.user_id)
     except PendingResponseRegistrationError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

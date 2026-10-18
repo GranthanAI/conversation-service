@@ -9,6 +9,8 @@ from app.repositories.conversation_repository import CassandraConversationReposi
 from app.repositories.message_repository import CassandraMessageRepository
 from app.repositories.outbox_repository import CassandraOutboxRepository
 from app.repositories.inbox_repository import CassandraInboxRepository
+from app.repositories.preferences_repository import CassandraPreferencesRepository
+from app.services.preferences_service import PreferencesService
 
 from app.services.cache_service import CacheService
 from app.services.conversation_service import ConversationService
@@ -58,6 +60,20 @@ def get_kafka_producer_client() -> KafkaProducerClient:
     """
     return kafka_producer_client
 
+def get_preferences_repository() -> CassandraPreferencesRepository:
+    """
+    Factory method injecting the Cassandra preferences repository.
+    """
+    return CassandraPreferencesRepository()
+
+def get_preferences_service(
+    repo: CassandraPreferencesRepository = Depends(get_preferences_repository)
+) -> PreferencesService:
+    """
+    Factory method injecting PreferencesService.
+    """
+    return PreferencesService(repo=repo)
+
 # --- Service Factory Injections ---
 
 def get_conversation_service(
@@ -73,12 +89,16 @@ def get_conversation_service(
 def get_message_service(
     repo: CassandraMessageRepository = Depends(get_message_repository),
     cache_service: CacheService = Depends(get_cache_service),
-    producer_client: KafkaProducerClient = Depends(get_kafka_producer_client)
+    producer_client: KafkaProducerClient = Depends(get_kafka_producer_client),
+    preferences_service: PreferencesService = Depends(get_preferences_service),
 ) -> MessageService:
     """
     Factory method injecting MessageService with repository and cache DI.
     """
-    return MessageService(repo=repo, cache_service=cache_service, producer_client=producer_client)
+    return MessageService(
+        repo=repo, cache_service=cache_service, producer_client=producer_client,
+        preferences_service=preferences_service,
+    )
 
 def get_idempotency_service() -> IdempotencyService:
     """

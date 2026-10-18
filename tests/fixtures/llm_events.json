@@ -1,7 +1,7 @@
 {
   "request": {
     "event_type": "chat.message.created",
-    "schema_version": "2.1",
+    "schema_version": "2.2",
     "message_id": "00000000-0000-7000-8000-0000000000a1",
     "response_message_id": "00000000-0000-7000-8000-0000000000a2",
     "conversation_id": "00000000-0000-7000-8000-0000000000c1",
@@ -12,12 +12,25 @@
     "file_ids": [
       "00000000-0000-4000-8000-0000000000f1"
     ],
+    "history": [],
+    "preferences": {
+      "answer_length": "concise",
+      "tone": "simple",
+      "language": "hi",
+      "language_name": "Hindi",
+      "personal_instructions": "Prefer Python examples",
+      "citations": "hide"
+    },
+    "defaults_applied": {
+      "mode": true,
+      "tools": false
+    },
     "metadata": {},
     "trace_context": {
       "traceparent": "",
       "tracestate": ""
     },
-    "timestamp": "2026-10-17T07:03:04.892324Z"
+    "timestamp": "2026-10-17T19:09:55.712239Z"
   },
   "chunk": {
     "event_type": "chat.response.chunk",
@@ -30,7 +43,7 @@
     "sequence_number": 1,
     "content": "Hel",
     "is_last": false,
-    "timestamp": "2026-10-17T07:03:04.892324Z"
+    "timestamp": "2026-10-17T19:09:55.712239Z"
   },
   "final": {
     "event_type": "chat.response.generated",
@@ -72,7 +85,7 @@
     "status": "success",
     "error_code": null,
     "error_message": null,
-    "timestamp": "2026-10-17T07:03:04.892324Z"
+    "timestamp": "2026-10-17T19:09:55.712239Z"
   },
   "error": {
     "event_type": "chat.response.generated",
@@ -107,6 +120,14 @@
     "status": "error",
     "error_code": "UNEXPECTED_ERROR",
     "error_message": "An unexpected error occurred while processing your request.",
-    "timestamp": "2026-10-17T07:03:04.892324Z"
+    "timestamp": "2026-10-17T19:09:55.712239Z"
+  },
+  "request_preferences_parsed": {
+    "answer_length": "concise",
+    "tone": "simple",
+    "language": "hi",
+    "language_name": "Hindi",
+    "personal_instructions": "Prefer Python examples",
+    "citations": "hide"
   }
 }

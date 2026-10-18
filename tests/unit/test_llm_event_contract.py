@@ -131,6 +131,32 @@ def test_request_payload_satisfies_llm_request_model():
     assert not missing, f"llm-service request model has fields we do not send: {missing}"
     for key, value in llm_request.items():
         assert isinstance(payload[key], type(value)) or payload[key] is None, key
-    assert payload["schema_version"] == llm_request["schema_version"] == "2.1"
+    assert payload["schema_version"] == llm_request["schema_version"] == "2.2"
     assert payload["message_id"] == str(req) and payload["response_message_id"] == str(resp)
     UUID(payload["message_id"]); UUID(payload["response_message_id"])
+
+
+def test_generation_preferences_we_send_are_understood_by_llm_service_unchanged():
+    """The fixture's `request_preferences_parsed` is what llm-service's normalizer produced
+    from these preferences. Every field we send must survive parsing with the same value
+    (a value llm-service did not accept would silently fall back to its default)."""
+    from app.models.preferences import UserPreferences, generation_preferences
+
+    sent = generation_preferences(UserPreferences(
+        answer_length="concise", tone="simple", language="hi",
+        personal_instructions="Prefer Python examples", citations="hide",
+    ))
+    parsed = FIXTURES["request_preferences_parsed"]
+    assert set(sent) == set(parsed), f"field mismatch: {set(sent) ^ set(parsed)}"
+    assert sent == parsed
+
+
+def test_request_carries_defaults_applied_in_the_shape_llm_service_reads():
+    assert set(FIXTURES["request"]["defaults_applied"]) == {"mode", "tools"}
+    svc = MessageService(repo=MagicMock())
+    payload = svc._build_chat_message_created_payload(
+        uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), "hi", response_message_id=uuid.uuid4(),
+        defaults_applied={"mode": True, "tools": False}, preferences={"tone": "simple"},
+    )
+    assert payload["defaults_applied"] == {"mode": True, "tools": False}
+    assert payload["preferences"] == {"tone": "simple"}
