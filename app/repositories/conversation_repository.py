@@ -37,7 +37,8 @@ class CassandraConversationRepository:
         event_id: UUID,
         event_type: str,
         outbox_payload: str,
-        parent_conversation_id: Optional[UUID] = None
+        parent_conversation_id: Optional[UUID] = None,
+        branch_message_id: Optional[UUID] = None,
     ) -> Conversation:
         """
         Atomic transactional write saving conversation data and outbox task inside a single LOGGED BATCH.
@@ -47,8 +48,8 @@ class CassandraConversationRepository:
         
         cql = """
             BEGIN BATCH
-                INSERT INTO conversations (conversation_id, user_id, title, created_at, updated_at, status, parent_conversation_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?);
+                INSERT INTO conversations (conversation_id, user_id, title, created_at, updated_at, status, parent_conversation_id, branch_message_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
                 INSERT INTO conversations_by_user (user_id, updated_at, conversation_id, title, created_at, status, parent_conversation_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?);
                 INSERT INTO transactional_outbox (bucket, event_id, event_type, payload, published, created_at)
@@ -58,7 +59,7 @@ class CassandraConversationRepository:
         stmt = self._get_prepared("create_conv_outbox", cql)
         
         self.manager.session.execute(stmt, (
-            conversation_id, user_id, title, now, now, status, parent_conversation_id,
+            conversation_id, user_id, title, now, now, status, parent_conversation_id, branch_message_id,
             user_id, now, conversation_id, title, now, status, parent_conversation_id,
             bucket, event_id, event_type, outbox_payload, False, now
         ))
@@ -70,7 +71,8 @@ class CassandraConversationRepository:
             created_at=now,
             updated_at=now,
             status=ConversationStatus(status),
-            parent_conversation_id=parent_conversation_id
+            parent_conversation_id=parent_conversation_id,
+            branch_message_id=branch_message_id,
         )
 
     def get(self, conversation_id: UUID) -> Optional[Conversation]:
@@ -78,7 +80,7 @@ class CassandraConversationRepository:
         Fetches conversation metadata by UUID.
         """
         cql = """
-            SELECT conversation_id, user_id, title, created_at, updated_at, status, parent_conversation_id
+            SELECT conversation_id, user_id, title, created_at, updated_at, status, parent_conversation_id, branch_message_id
             FROM conversations
             WHERE conversation_id = ?
         """
@@ -95,7 +97,8 @@ class CassandraConversationRepository:
             created_at=row.created_at,
             updated_at=row.updated_at,
             status=ConversationStatus(row.status),
-            parent_conversation_id=getattr(row, 'parent_conversation_id', None)
+            parent_conversation_id=getattr(row, 'parent_conversation_id', None),
+            branch_message_id=getattr(row, 'branch_message_id', None),
         )
 
     def update_with_outbox(

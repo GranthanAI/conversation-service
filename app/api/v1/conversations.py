@@ -13,7 +13,8 @@ from app.security import (
     require_conversation_owner,
     CurrentUser
 )
-from app.api.deps import get_conversation_service
+from app.api.deps import get_branch_context_service, get_conversation_service, get_message_repository
+from app.services.branch_context_service import BranchContextService
 from app.services.conversation_service import ConversationService
 from app.models.conversation import Conversation
 from app.schemas.conversation import (
@@ -31,16 +32,22 @@ router = APIRouter()
 async def create_conversation(
     payload: CreateConversationRequest,
     current_user: CurrentUser = Depends(get_current_user),
-    service: ConversationService = Depends(get_conversation_service)
+    service: ConversationService = Depends(get_conversation_service),
+    message_repo=Depends(get_message_repository),
 ):
     """
-    Creates a new conversation catalog for the authenticated user.
+    Creates a new conversation catalog for the authenticated user. A branch (parent_conversation_id)
+    freezes its branch point: `branch_message_id`, or the parent's latest message when omitted.
     """
+    if payload.branch_message_id and not payload.parent_conversation_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="branch_message_id requires parent_conversation_id.")
     try:
         conv = await service.create(
             user_id=current_user.id,
             title=payload.title,
-            parent_conversation_id=payload.parent_conversation_id
+            parent_conversation_id=payload.parent_conversation_id,
+            branch_message_id=payload.branch_message_id,
+            message_repo=message_repo,
         )
         return conv
     except LookupError as e:
@@ -90,6 +97,19 @@ async def get_conversation(
     Fetches a specific conversation by ID (requires ownership).
     """
     return conv
+
+@router.get("/{conversation_id}/context", status_code=status.HTTP_200_OK, summary="Inherited branch context (lineage and documents)")
+async def get_branch_context(
+    conversation_id: UUID,
+    conv: Conversation = Depends(require_conversation_owner),
+    branch_context: BranchContextService = Depends(get_branch_context_service),
+):
+    """
+    The ancestors this conversation inherits from (up to each branch point) and the documents attached
+    in that inherited part, each with the conversation it came from. Ancestors that are missing,
+    deleted or not owned by the caller end the chain (`truncated` says why).
+    """
+    return await branch_context.context(conv)
 
 @router.patch("/{conversation_id}/rename", response_model=ConversationResponse, status_code=status.HTTP_200_OK, summary="Rename conversation")
 async def rename_conversation(

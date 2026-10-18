@@ -30,3 +30,5 @@ class Conversation:
     updated_at: datetime
     status: ConversationStatus = ConversationStatus.ACTIVE
     parent_conversation_id: Optional[UUID] = None
+    # Last message of the parent that was in scope when this branch was created (inclusive).
+    branch_message_id: Optional[UUID] = None

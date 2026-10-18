@@ -10,6 +10,7 @@ from app.repositories.message_repository import CassandraMessageRepository
 from app.repositories.outbox_repository import CassandraOutboxRepository
 from app.repositories.inbox_repository import CassandraInboxRepository
 from app.repositories.preferences_repository import CassandraPreferencesRepository
+from app.services.branch_context_service import BranchContextService
 from app.services.preferences_service import PreferencesService
 
 from app.services.cache_service import CacheService
@@ -86,18 +87,25 @@ def get_conversation_service(
     """
     return ConversationService(repo=repo, cache_service=cache_service, producer_client=producer_client)
 
+def get_branch_context_service(
+    conversations: ConversationService = Depends(get_conversation_service),
+    message_repo: CassandraMessageRepository = Depends(get_message_repository),
+) -> BranchContextService:
+    return BranchContextService(conversations, message_repo)
+
 def get_message_service(
     repo: CassandraMessageRepository = Depends(get_message_repository),
     cache_service: CacheService = Depends(get_cache_service),
     producer_client: KafkaProducerClient = Depends(get_kafka_producer_client),
     preferences_service: PreferencesService = Depends(get_preferences_service),
+    branch_context: BranchContextService = Depends(get_branch_context_service),
 ) -> MessageService:
     """
     Factory method injecting MessageService with repository and cache DI.
     """
     return MessageService(
         repo=repo, cache_service=cache_service, producer_client=producer_client,
-        preferences_service=preferences_service,
+        preferences_service=preferences_service, branch_context=branch_context,
     )
 
 def get_idempotency_service() -> IdempotencyService:

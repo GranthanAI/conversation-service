@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS conversations (
     PRIMARY KEY (conversation_id)
 );
 
+-- Branch point (inclusive) in the parent; additive and idempotent (Cassandra >= 4.1).
+ALTER TABLE conversations ADD IF NOT EXISTS branch_message_id uuid;
+
 -- Conversations by User Index Catalog
 CREATE TABLE IF NOT EXISTS conversations_by_user (
     user_id uuid,

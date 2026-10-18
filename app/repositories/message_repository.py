@@ -115,6 +115,29 @@ class CassandraMessageRepository:
             ))
         return messages
 
+    def history_upto(self, conversation_id: UUID, upto_message_id: UUID, limit: int = 50) -> List[Message]:
+        """Newest-first messages up to and INCLUDING `upto_message_id` (a branch point)."""
+        cql = """
+            SELECT message_id, sender, content, created_at, status, file_ids
+            FROM messages_by_conversation
+            WHERE conversation_id = ? AND message_id <= ?
+            LIMIT ?
+        """
+        stmt = self._get_prepared("history_upto", cql)
+        rows = self.manager.session.execute(stmt, (conversation_id, upto_message_id, limit))
+        out: List[Message] = []
+        for row in rows:
+            try:
+                status = MessageStatus(row.status)
+            except ValueError:  # 'deleted'
+                continue
+            out.append(Message(
+                conversation_id=conversation_id, message_id=row.message_id, sender=row.sender,
+                content=row.content, created_at=row.created_at, status=status,
+                file_ids=list(row.file_ids) if row.file_ids else [],
+            ))
+        return out
+
     def get_message(self, conversation_id: UUID, message_id: UUID) -> Optional[Message]:
         """Fetches a single message row, or None."""
         cql = """

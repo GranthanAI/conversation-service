@@ -47,7 +47,8 @@ class ConversationService:
             await self.cache.set_conversation(conv)
         return conv
 
-    async def create(self, user_id: UUID, title: str, parent_conversation_id: Optional[UUID] = None) -> Conversation:
+    async def create(self, user_id: UUID, title: str, parent_conversation_id: Optional[UUID] = None,
+                     branch_message_id: Optional[UUID] = None, message_repo=None) -> Conversation:
         """
         Creates a conversation atomically alongside its outbox task,
         writes through to cache, and publishes directly to Kafka.
@@ -61,6 +62,17 @@ class ConversationService:
                 raise ValueError("Parent conversation is not active.")
             if parent_conv.user_id != user_id:
                 raise PermissionError("Access to parent conversation denied.")
+            # Branch point: an explicit message must belong to the parent; otherwise the parent's latest
+            # message right now is frozen as the boundary, so later parent messages never leak in.
+            if message_repo is not None:
+                if branch_message_id is not None:
+                    if message_repo.get_message(parent_conversation_id, branch_message_id) is None:
+                        raise ValueError("branch_message_id is not a message of the parent conversation.")
+                else:
+                    latest = message_repo.history(parent_conversation_id, limit=1)
+                    branch_message_id = latest[0].message_id if latest else None
+        else:
+            branch_message_id = None
 
         conversation_id = uuidv7()
         event_id = uuid.uuid1()
@@ -74,6 +86,7 @@ class ConversationService:
                 "title":                  title,
                 "status":                 "ACTIVE",
                 "parent_conversation_id": str(parent_conversation_id) if parent_conversation_id else None,
+                "branch_message_id":      str(branch_message_id) if branch_message_id else None,
                 "created_at":             now.isoformat(),
             },
             causation_id=str(event_id),
@@ -89,7 +102,8 @@ class ConversationService:
             event_id=event_id,
             event_type=KafkaTopics.CONVERSATION_CREATED,
             outbox_payload=json.dumps(envelope),
-            parent_conversation_id=parent_conversation_id
+            parent_conversation_id=parent_conversation_id,
+            branch_message_id=branch_message_id,
         )
         
         # Write-through update

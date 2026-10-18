@@ -45,12 +45,15 @@ class MessageService:
         cache_service: Optional[CacheService] = None,
         producer_client: Optional[KafkaProducerClient] = None,
         preferences_service: Optional["PreferencesService"] = None,
+        branch_context=None,
     ):
         self.repo = repo
         self.cache = cache_service
         self.producer = producer_client
         # Optional: without it messages carry no saved defaults (built-in behaviour).
         self.preferences = preferences_service
+        # Optional: resolves what a branch inherits from its ancestors (see BranchContextService).
+        self.branch_context = branch_context
 
     def _resolve_preferences(
         self, user_id: Optional[UUID], mode: Optional[str], selected_tools: Optional[List[str]]
@@ -158,6 +161,8 @@ class MessageService:
         event_id = uuid.uuid1()
         # Read BEFORE this turn's rows exist, so the history is strictly what came earlier.
         history = await self._recent_history(conversation_id) if sender == "user" else []
+        if sender == "user" and self.branch_context is not None:
+            history = await self._with_inherited_history(conversation_id, history)
         resolved = self._resolve_preferences(user_id, mode, selected_tools)
         payload = self._build_chat_message_created_payload(
             conversation_id, message_id, user_id, content, resolved.mode, resolved.selected_tools, file_ids,
@@ -201,6 +206,21 @@ class MessageService:
             logger.warning("Could not read history for the request event", conversation_id=str(conversation_id), error=str(e))
             return []
         return self._format_history(msgs)
+
+    async def _with_inherited_history(self, conversation_id: UUID, own: List[dict]) -> List[dict]:
+        """Prepends what this branch inherits from its ancestors (up to each branch point), marked
+        `inherited` with the conversation it came from. Best effort: never blocks sending."""
+        try:
+            conv = await self.branch_context.conversations.get(conversation_id)
+            if conv is None or not conv.parent_conversation_id:
+                return own
+            inherited = await self.branch_context.inherited_history(conv)
+        except Exception as e:
+            logger.warning("Could not attach inherited history", conversation_id=str(conversation_id), error=str(e))
+            return own
+        marked = [{"role": h["role"], "content": h["content"], "inherited": True,
+                   "source_conversation_id": h["conversation_id"]} for h in inherited]
+        return marked + own
 
     @staticmethod
     def _format_history(messages_newest_first: List[Message]) -> List[dict]:
