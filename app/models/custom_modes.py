@@ -168,6 +168,7 @@ class CustomModeList(BaseModel):
     limit: int
     offset: int
     max_per_user: int
+    limits: dict = Field(default_factory=dict)      # {name, description, instructions}: max characters (server config)
 
 
 class CustomModeSnapshot(BaseModel):

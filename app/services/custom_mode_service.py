@@ -29,7 +29,10 @@ class CustomModeService:
     async def list(self, owner_id: uuid.UUID, *, include_archived: bool, limit: int, offset: int) -> CustomModeList:
         rows, total = await self.repo.list(owner_id, include_archived=include_archived, limit=limit, offset=offset)
         return CustomModeList(items=[CustomModeResponse.from_record(r) for r in rows], total=total, limit=limit,
-                              offset=offset, max_per_user=settings.CUSTOM_MODE_MAX_PER_USER)
+                              offset=offset, max_per_user=settings.CUSTOM_MODE_MAX_PER_USER,
+                              limits={"name": settings.CUSTOM_MODE_NAME_MAX_CHARS,
+                                      "description": settings.CUSTOM_MODE_DESCRIPTION_MAX_CHARS,
+                                      "instructions": settings.CUSTOM_MODE_INSTRUCTIONS_MAX_CHARS})
 
     async def get(self, owner_id: uuid.UUID, mode_id: uuid.UUID) -> CustomModeResponse:
         record = await self.repo.get(owner_id, mode_id)
