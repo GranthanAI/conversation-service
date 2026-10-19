@@ -12,7 +12,13 @@ import argparse
 import asyncio
 import json
 import sys
+import types
 from pathlib import Path
+
+# Same Python 3.12 compatibility patch as app/main.py (the Cassandra driver imports asyncore).
+_asyncore = types.ModuleType("asyncore")
+_asyncore.dispatcher = type("dispatcher", (), {})
+sys.modules.setdefault("asyncore", _asyncore)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
