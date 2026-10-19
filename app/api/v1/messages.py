@@ -10,6 +10,7 @@ from typing import Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, status, Query, Response, HTTPException, Header
 
+from app.services.custom_mode_service import CustomModeUnavailableError
 from app.security import (
     require_conversation_owner,
     CurrentUser
@@ -87,6 +88,13 @@ async def create_message(
     except Exception as e:
         if x_idempotency_key:
             await idempotency_service.remove_lock(x_idempotency_key)
+        if isinstance(e, CustomModeUnavailableError):
+            # An explicitly chosen custom mode is not usable: nothing ran, and no other mode is substituted.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "custom_mode_unavailable",
+                        "message": "That custom mode is no longer available. Choose another mode and try again."},
+            )
         if isinstance(e, PendingResponseRegistrationError):
             # Nothing was dispatched (placeholder rolled back); the client may retry.
             raise HTTPException(

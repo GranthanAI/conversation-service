@@ -16,6 +16,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.models.custom_modes import parse_custom_ref
+
 
 class AnswerLength(str, Enum):
     CONCISE = "concise"
@@ -91,6 +93,10 @@ def _clean_mode(v: Optional[str]) -> Optional[str]:
     v = v.strip().lower()
     if v in ("", "auto", "default"):
         return None  # None = Auto: the planner decides
+    if v.startswith("custom:"):
+        if parse_custom_ref(v) is None:
+            raise ValueError("Invalid custom mode reference.")
+        return v         # existence / ownership is checked against PostgreSQL by the service
     if not _MODE_ID.fullmatch(v):
         raise ValueError("Invalid mode.")
     return v
@@ -225,6 +231,8 @@ class PreferencesUpdate(BaseModel):
 
 
 class PreferencesResponse(UserPreferences):
+    # False when the saved default is a custom mode that was archived (it is ignored until changed).
+    default_mode_available: bool = True
     version: int = 0
     updated_at: Optional[datetime] = None
     options: dict = Field(default_factory=dict)

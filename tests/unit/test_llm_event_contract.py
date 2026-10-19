@@ -131,7 +131,7 @@ def test_request_payload_satisfies_llm_request_model():
     assert not missing, f"llm-service request model has fields we do not send: {missing}"
     for key, value in llm_request.items():
         assert isinstance(payload[key], type(value)) or payload[key] is None, key
-    assert payload["schema_version"] == llm_request["schema_version"] == "2.2"
+    assert payload["schema_version"] == llm_request["schema_version"] == "2.3"
     assert payload["message_id"] == str(req) and payload["response_message_id"] == str(resp)
     UUID(payload["message_id"]); UUID(payload["response_message_id"])
 

@@ -16,10 +16,12 @@ sys.modules['asyncore'] = asyncore_mock
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response, status
+from app.db.errors import register_postgres_handlers
 from app.core.config import settings
 import asyncio
 from app.core.logging import logger
 from app.db.cassandra import cassandra_manager
+from app.db.postgres import check_database, dispose_engine, pool_stats
 from app.db.redis import redis_manager
 from app.db.kafka import kafka_manager
 from app.api.router import api_router
@@ -75,6 +77,7 @@ async def lifespan(app: FastAPI):
         pass
 
     cassandra_manager.close()
+    await dispose_engine()
     await redis_manager.close()
     await kafka_manager.close()
 
@@ -87,6 +90,8 @@ app = FastAPI(
 
 # Middleware: Correlation ID must be first so all downstream code can read it
 app.add_middleware(CorrelationIDMiddleware)
+
+register_postgres_handlers(app)
 
 # Mount central API routing prefixes
 app.include_router(api_router, prefix="/v1")
@@ -108,14 +113,16 @@ async def root_readiness(response: Response):
     cassandra_ok = cassandra_manager.check_health()
     redis_ok = await redis_manager.check_health()
     kafka_ok = await kafka_manager.check_health()
+    postgres_ok = await check_database()
 
     status_info = {
+        "postgres": "UP" if postgres_ok else "DOWN",
         "cassandra": "UP" if cassandra_ok else "DOWN",
         "redis": "UP" if redis_ok else "DOWN",
         "kafka": "UP" if kafka_ok else "DOWN",
     }
 
-    if not (cassandra_ok and redis_ok and kafka_ok):
+    if not (cassandra_ok and redis_ok and kafka_ok and postgres_ok):
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "DOWN", "details": status_info}
         

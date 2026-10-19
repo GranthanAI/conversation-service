@@ -9,7 +9,12 @@ from app.repositories.conversation_repository import CassandraConversationReposi
 from app.repositories.message_repository import CassandraMessageRepository
 from app.repositories.outbox_repository import CassandraOutboxRepository
 from app.repositories.inbox_repository import CassandraInboxRepository
-from app.repositories.preferences_repository import CassandraPreferencesRepository
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db
+from app.repositories.pg_repositories import CustomModeRepository, PreferencesRepository
+from app.services.custom_mode_service import CustomModeService
+from app.services.mode_catalog import mode_catalog
 from app.services.branch_context_service import BranchContextService
 from app.services.preferences_service import PreferencesService
 
@@ -61,19 +66,25 @@ def get_kafka_producer_client() -> KafkaProducerClient:
     """
     return kafka_producer_client
 
-def get_preferences_repository() -> CassandraPreferencesRepository:
-    """
-    Factory method injecting the Cassandra preferences repository.
-    """
-    return CassandraPreferencesRepository()
+def get_preferences_repository(session: AsyncSession = Depends(get_db)) -> PreferencesRepository:
+    """PostgreSQL preferences repository bound to the request-scoped session."""
+    return PreferencesRepository(session)
+
+def get_custom_mode_repository(session: AsyncSession = Depends(get_db)) -> CustomModeRepository:
+    """PostgreSQL custom-mode repository bound to the request-scoped session."""
+    return CustomModeRepository(session)
 
 def get_preferences_service(
-    repo: CassandraPreferencesRepository = Depends(get_preferences_repository)
+    repo: PreferencesRepository = Depends(get_preferences_repository),
+    modes: CustomModeRepository = Depends(get_custom_mode_repository),
 ) -> PreferencesService:
-    """
-    Factory method injecting PreferencesService.
-    """
-    return PreferencesService(repo=repo)
+    """Factory method injecting PreferencesService."""
+    return PreferencesService(repo=repo, modes=modes, catalog=mode_catalog)
+
+def get_custom_mode_service(
+    modes: CustomModeRepository = Depends(get_custom_mode_repository),
+) -> CustomModeService:
+    return CustomModeService(modes)
 
 # --- Service Factory Injections ---
 

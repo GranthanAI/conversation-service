@@ -200,7 +200,7 @@ async def test_request_event_carries_the_pending_assistant_id_and_a_distinct_req
     assert payload["response_message_id"] == str(assistant.message_id)
     assert payload["message_id"] == str(USER), "request/correlation id keeps its meaning"
     assert payload["response_message_id"] != payload["message_id"]
-    assert payload["schema_version"] == "2.2"
+    assert payload["schema_version"] == "2.3"
 
 
 async def test_pending_marker_uses_the_same_id_as_placeholder_and_event(world):

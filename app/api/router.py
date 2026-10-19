@@ -9,6 +9,7 @@ from app.api.v1.conversations import router as conversations_router
 from app.api.v1.messages import router as messages_router
 from app.api.v1.stream import router as stream_router
 from app.api.v1.preferences import router as preferences_router
+from app.api.v1.custom_modes import router as custom_modes_router
 
 api_router = APIRouter()
 
@@ -18,3 +19,4 @@ api_router.include_router(conversations_router, prefix="/conversations", tags=["
 api_router.include_router(messages_router, prefix="/conversations", tags=["Messages"])
 api_router.include_router(stream_router, prefix="/stream", tags=["SSE Stream"])
 api_router.include_router(preferences_router, prefix="/preferences", tags=["Preferences"])
+api_router.include_router(custom_modes_router, prefix="/custom-modes", tags=["Custom modes"])

@@ -1,4 +1,4 @@
-.PHONY: help setup infra infra-up infra-down infra-status infra-logs-kafka schema dev test clean
+.PHONY: help setup infra infra-up infra-down infra-status infra-logs-kafka schema db-create db-migrate db-migrate-prefs dev test clean
 
 help:
 	@echo "========================================================================"
@@ -10,6 +10,9 @@ help:
 	@echo "  make infra-status     - Check status of shared GraphGPT containers"
 	@echo "  make infra-logs-kafka - Follow Kafka container logs"
 	@echo "  make schema           - Wait for Cassandra readiness & apply CQL schema"
+	@echo "  make db-create        - Create conversation_service_db in the shared Postgres (idempotent)"
+	@echo "  make db-migrate       - Apply Alembic migrations (PostgreSQL: preferences + custom modes)"
+	@echo "  make db-migrate-prefs - Copy legacy Cassandra preferences into PostgreSQL (DRY=1 for a dry run)"
 	@echo "  make dev              - Launch the FastAPI development server"
 	@echo "  make test             - Run pytest unit tests suite"
 	@echo "  make clean            - Remove __pycache__ and build files"
@@ -84,4 +87,11 @@ kafka-log-conv-deleted:
 kafka-log-msg-created:
 	docker exec -it graphgpt-kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic chat.message.created --from-beginning
 
+db-create:
+	docker exec graphgpt-postgres psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'conversation_service_db'" | grep -q 1 || 	docker exec graphgpt-postgres psql -U postgres -c "CREATE DATABASE conversation_service_db"
 
+db-migrate:
+	uv run alembic upgrade head
+
+db-migrate-prefs:
+	uv run python scripts/migrate_preferences_to_postgres.py $(if $(DRY),--dry-run,)

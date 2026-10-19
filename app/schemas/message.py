@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field, field_validator
 _TOOL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
 MAX_SELECTED_TOOLS = 5  # must equal llm-service app/tools/selection.py MAX_SELECTED_TOOLS
 
+from app.models.custom_modes import parse_custom_ref
+
 class CreateMessageRequest(BaseModel):
     """
     Form model for message creation.
@@ -38,7 +40,12 @@ class CreateMessageRequest(BaseModel):
         if v is None:
             return v
         v = v.strip()
-        # Shape only; llm-service decides which modes exist and are enabled.
+        # Shape only. A built-in id is validated by llm-service (which owns the mode registry); a
+        # `custom:<uuid>` reference is validated against PostgreSQL (owner-scoped) when the message is sent.
+        if v.lower().startswith("custom:"):
+            if parse_custom_ref(v) is None:
+                raise ValueError("Invalid custom mode reference.")
+            return v.lower()
         if v and not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", v):
             raise ValueError("Invalid mode.")
         return v or None

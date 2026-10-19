@@ -25,6 +25,44 @@ class Settings(BaseSettings):
     CASSANDRA_LOCAL_DC: str = "datacenter1"
     CASSANDRA_TIMEOUT_SECONDS: float = 5.0
 
+    # PostgreSQL (authoritative store for user preferences and custom modes; Cassandra is not used for them).
+    # Runtime role: DML only. Schema changes are applied separately with Alembic (`make db-migrate`), never at startup.
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:1234@localhost:5433/conversation_service_db"
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 5
+    DB_POOL_TIMEOUT_SECONDS: float = 5.0         # waiting for a free connection
+    DB_CONNECT_TIMEOUT_SECONDS: float = 5.0
+    DB_STATEMENT_TIMEOUT_MS: int = 3000          # server-side cap per statement
+    DB_ECHO: bool = False
+
+    # llm-service (owner of the live mode/tool registry): used to validate built-in mode ids and tool ids that are
+    # saved as defaults. If it cannot be reached the save is accepted (the pipeline still validates at send time).
+    LLM_SERVICE_URL: str = "http://localhost:8003"
+    LLM_CATALOG_TTL_SECONDS: float = 60.0
+    LLM_CATALOG_TIMEOUT_SECONDS: float = 1.5
+
+    # Custom modes (user-owned, reusable instruction sets)
+    CUSTOM_MODE_MAX_PER_USER: int = 20
+    CUSTOM_MODE_NAME_MAX_CHARS: int = 60
+    CUSTOM_MODE_DESCRIPTION_MAX_CHARS: int = 200
+    CUSTOM_MODE_INSTRUCTIONS_MAX_CHARS: int = 4000
+
+    # PostgreSQL (authoritative store for user preferences and custom modes; Cassandra is not used for them).
+    # Runtime role: DML only. Schema changes are applied separately with Alembic (`make db-migrate`), never at startup.
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:1234@localhost:5433/conversation_service_db"
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 5
+    DB_POOL_TIMEOUT_SECONDS: float = 5.0         # waiting for a free connection
+    DB_CONNECT_TIMEOUT_SECONDS: float = 5.0
+    DB_STATEMENT_TIMEOUT_MS: int = 3000          # server-side cap per statement
+    DB_ECHO: bool = False
+
+    # Custom modes (user-owned, reusable instruction sets)
+    CUSTOM_MODE_MAX_PER_USER: int = 20
+    CUSTOM_MODE_NAME_MAX_CHARS: int = 60
+    CUSTOM_MODE_DESCRIPTION_MAX_CHARS: int = 200
+    CUSTOM_MODE_INSTRUCTIONS_MAX_CHARS: int = 4000
+
     # Redis settings
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_NODES: str = "localhost:6379"

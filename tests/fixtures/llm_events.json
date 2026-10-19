@@ -1,7 +1,7 @@
 {
   "request": {
     "event_type": "chat.message.created",
-    "schema_version": "2.2",
+    "schema_version": "2.3",
     "message_id": "00000000-0000-7000-8000-0000000000a1",
     "response_message_id": "00000000-0000-7000-8000-0000000000a2",
     "conversation_id": "00000000-0000-7000-8000-0000000000c1",
@@ -30,7 +30,9 @@
       "traceparent": "",
       "tracestate": ""
     },
-    "timestamp": "2026-10-17T19:09:55.712239Z"
+    "timestamp": "2026-10-17T19:09:55.712239Z",
+    "ancestors": [],
+    "custom_mode": null
   },
   "chunk": {
     "event_type": "chat.response.chunk",

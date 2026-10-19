@@ -55,13 +55,13 @@ class MessageService:
         # Optional: resolves what a branch inherits from its ancestors (see BranchContextService).
         self.branch_context = branch_context
 
-    def _resolve_preferences(
+    async def _resolve_preferences(
         self, user_id: Optional[UUID], mode: Optional[str], selected_tools: Optional[List[str]]
     ) -> ResolvedMessagePreferences:
         if self.preferences is None:
             return ResolvedMessagePreferences(mode=mode, selected_tools=selected_tools,
                                               defaults_applied={"mode": False, "tools": False})
-        return self.preferences.resolve_for_message(user_id, mode, selected_tools)
+        return await self.preferences.resolve_for_message(user_id, mode, selected_tools)
 
     async def _invalidate_cache(self, conversation_id: UUID):
         """
@@ -85,6 +85,7 @@ class MessageService:
         preferences: Optional[dict] = None,
         defaults_applied: Optional[dict] = None,
         ancestors: Optional[List[dict]] = None,
+        custom_mode: Optional[dict] = None,
     ) -> dict:
         """
         Builds the flat chat.message.created payload matching llm-service's
@@ -113,7 +114,7 @@ class MessageService:
         correlation_id = get_correlation_id()
         return {
             "event_type": "chat.message.created",
-            "schema_version": "2.2",
+            "schema_version": "2.3",
             "message_id": str(message_id),
             "response_message_id": str(response_message_id) if response_message_id else None,
             "conversation_id": str(conversation_id),
@@ -128,6 +129,10 @@ class MessageService:
             # Branch lineage with boundaries (root first): lets other services apply the same branch point to
             # summaries. Empty for a root conversation.
             "ancestors": ancestors or [],
+            # Trusted, immutable definition of the custom mode this request runs on (resolved here from
+            # PostgreSQL, owner-scoped). mode_hint is then the BUILT-IN path it executes on ("default"/"smart").
+            # llm-service never resolves custom modes itself and ignores any client-supplied instruction text.
+            "custom_mode": custom_mode,
             "preferences": preferences or {},
             "defaults_applied": defaults_applied or {"mode": False, "tools": False},
             "metadata": metadata or {},
@@ -168,7 +173,7 @@ class MessageService:
         ancestors: List[dict] = []
         if sender == "user" and self.branch_context is not None:
             history, ancestors = await self._branch_event_context(conversation_id, history)
-        resolved = self._resolve_preferences(user_id, mode, selected_tools)
+        resolved = await self._resolve_preferences(user_id, mode, selected_tools)
         payload = self._build_chat_message_created_payload(
             conversation_id, message_id, user_id, content, resolved.mode, resolved.selected_tools, file_ids,
             response_message_id=response_message_id,
@@ -176,6 +181,7 @@ class MessageService:
             preferences=resolved.generation,
             defaults_applied=resolved.defaults_applied,
             ancestors=ancestors,
+            custom_mode=resolved.custom_mode.model_dump(mode="json") if resolved.custom_mode else None,
         )
 
         if response_message_id:
@@ -391,7 +397,7 @@ class MessageService:
         # re-derived against the same attached documents.
         owner_id = user_id or prompt_user_id
         # A regeneration carries no explicit mode/tool choice: the saved defaults apply.
-        resolved = self._resolve_preferences(owner_id, None, None)
+        resolved = await self._resolve_preferences(owner_id, None, None)
         payload = self._build_chat_message_created_payload(
             conversation_id, request_id, owner_id, prompt_content,
             mode=resolved.mode,
