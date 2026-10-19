@@ -5,13 +5,14 @@ using Pydantic Settings class representation.
 """
 
 from typing import Optional
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     """
     Pydantic settings model managing all runtime environment configurations.
     """
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(hide_input_in_errors=True, env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
@@ -135,5 +136,28 @@ class Settings(BaseSettings):
     # finds the key already expired and mistakes it for "response arrived".
     PENDING_RESPONSE_MARKER_GRACE_SECONDS: int = 300
     PENDING_TIMEOUT_WORKER_POLL_INTERVAL_SECONDS: float = 5.0
+
+    @model_validator(mode="after")
+    def _fail_fast_on_unsafe_production_config(self):
+        """In production the service refuses to start with a development default or a weak secret (a known default
+        would let anyone forge tokens). Development and test environments are unaffected. Secret VALUES are never
+        included in the error message."""
+        if self.ENVIRONMENT.strip().lower() not in ("production", "prod"):
+            return self
+        dev_values = {"supersecretjwtkeyforauthservicelocaldvelopment12345", "graphgpt-jwt-secret", "graphgpt-memory-secret", "changeme", "secret"}
+        problems: list[str] = []
+
+        def secret(name: str, value: str) -> None:
+            if not value or value in dev_values or len(value) < 32:
+                problems.append(f"{name} must be set to a unique secret of at least 32 characters")
+        secret("JWT_SECRET_KEY", self.JWT_SECRET_KEY)
+        if not self.JWT_ISSUER:
+            problems.append("JWT_ISSUER must be set so token issuers are verified")
+        if self.DEBUG:
+            problems.append("DEBUG must be false")
+        if problems:
+            raise ValueError("Unsafe production configuration: " + "; ".join(problems))
+        return self
+
 
 settings = Settings()
