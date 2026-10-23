@@ -22,6 +22,9 @@ dependencies = [
     "pyjwt",
     "cryptography",
     "cramjam>=2.12.1",
+    "minio>=7.2",
+    "markdown-it-py>=3.0",
+    "weasyprint>=62",
 ]
 
 [dependency-groups]

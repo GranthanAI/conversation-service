@@ -32,6 +32,9 @@ from app.workers.retry_worker import start_retry_worker
 from app.workers.summary_worker import start_summary_worker
 from app.workers.pending_timeout_worker import start_pending_timeout_worker
 from app.middleware.correlation import CorrelationIDMiddleware
+from app.artifacts.runtime import build_export_service, get_artifact_service, get_object_store
+from app.artifacts.service import ArtifactWorker
+from app.exports.service import ExportWorker
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -52,6 +55,20 @@ async def lifespan(app: FastAPI):
     app.state.summary_worker_task = asyncio.create_task(start_summary_worker())
     app.state.pending_timeout_worker_task = asyncio.create_task(start_pending_timeout_worker())
 
+    # Artifact registry + export workers (PostgreSQL state, private object storage). A storage outage at startup is
+    # logged, not fatal: the workers retry, and every other endpoint keeps working.
+    app.state.artifact_tasks = []
+    try:
+        await get_object_store().ensure_ready()
+    except Exception as exc:
+        logger.error("artifact object store unavailable at startup", error_type=type(exc).__name__)
+    if settings.ARTIFACT_WORKER_ENABLED:
+        app.state.artifact_tasks.append(asyncio.create_task(
+            ArtifactWorker(get_artifact_service(), settings.ARTIFACT_WORKER_INTERVAL_SECONDS).run()))
+    if settings.EXPORT_WORKER_ENABLED:
+        app.state.artifact_tasks.append(asyncio.create_task(
+            ExportWorker(build_export_service(), settings.EXPORT_WORKER_INTERVAL_SECONDS).run()))
+
     yield
     # 2. Shutdown phase
     logger.info("Shutting down FastAPI application lifespan context...")
@@ -63,8 +80,11 @@ async def lifespan(app: FastAPI):
     app.state.retry_worker_task.cancel()
     app.state.summary_worker_task.cancel()
     app.state.pending_timeout_worker_task.cancel()
+    for task in app.state.artifact_tasks:
+        task.cancel()
     try:
         await asyncio.gather(
+            *app.state.artifact_tasks,
             app.state.kafka_consumer_task,
             app.state.outbox_worker_task,
             app.state.cleanup_worker_task,

@@ -24,6 +24,7 @@ WORKDIR /app
 # Install runtime event libs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libev4 \
+    libpango-1.0-0 libpangoft2-1.0-0 fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv

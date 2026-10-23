@@ -64,6 +64,42 @@ class Settings(BaseSettings):
     CUSTOM_MODE_DESCRIPTION_MAX_CHARS: int = 200
     CUSTOM_MODE_INSTRUCTIONS_MAX_CHARS: int = 4000
 
+    # Artifact registry (Mermaid / Manim) and exports. Rendering itself stays in llm-service (isolated subprocess); this
+    # service stores the verified MP4 / export archive in a PRIVATE bucket and serves it only to the owner.
+    ARTIFACT_STORE_ENDPOINT: str = "localhost:9010"            # S3-compatible endpoint (the existing file-minio)
+    ARTIFACT_STORE_ACCESS_KEY: str = "minioadmin"
+    ARTIFACT_STORE_SECRET_KEY: str = "minioadmin123"
+    ARTIFACT_STORE_BUCKET: str = "granthan-artifacts"
+    ARTIFACT_STORE_SECURE: bool = False
+    ARTIFACT_STORE_REGION: str = "us-east-1"
+    ARTIFACT_WORKER_ENABLED: bool = True
+    ARTIFACT_WORKER_INTERVAL_SECONDS: float = 1.5
+    ARTIFACT_LEASE_SECONDS: float = 60.0                       # one advancer per artifact at a time
+    ARTIFACT_MAX_AUTO_ATTEMPTS: int = 3                        # renders begun automatically per artifact
+    ARTIFACT_MAX_MANUAL_RETRIES: int = 5
+    ARTIFACT_MAX_ACTIVE_SECONDS: float = 900.0                 # a render stuck in one state this long is failed
+    ARTIFACT_MAX_VIDEO_BYTES: int = 50 * 1024 * 1024
+    ARTIFACT_MAX_MANIM_SPEC_CHARS: int = 4000
+    ARTIFACT_MAX_MERMAID_CHARS: int = 8000
+    ARTIFACT_MAX_PER_REGISTER_BATCH: int = 20
+    ARTIFACT_RENDERER_VERSION: str = "manim-templates-1"       # fallback when llm-service cannot be asked
+    ARTIFACT_RENDER_QUALITY: str = "l"
+    ARTIFACT_LLM_TIMEOUT_SECONDS: float = 20.0
+
+    # Exports
+    # Windows dev only: folder holding Pango/GLib DLLs for WeasyPrint (e.g. C:/msys64/mingw64/bin). Empty on Linux/Docker.
+    WEASYPRINT_DLL_DIRECTORIES: str = ""
+    EXPORT_WORKER_ENABLED: bool = True
+    EXPORT_WORKER_INTERVAL_SECONDS: float = 2.0
+    EXPORT_LEASE_SECONDS: float = 300.0
+    EXPORT_RETENTION_HOURS: float = 24.0
+    EXPORT_MAX_CONVERSATIONS: int = 500
+    EXPORT_MAX_MESSAGES_PER_CONVERSATION: int = 5000
+    EXPORT_MAX_ARCHIVE_BYTES: int = 500 * 1024 * 1024
+    EXPORT_INLINE_MAX_MESSAGES: int = 200                      # at or below this a single-conversation export runs inline
+    EXPORT_MAX_ATTEMPTS: int = 3
+    EXPORT_MAX_LIVE_PER_USER: int = 10
+
     # Redis settings
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_NODES: str = "localhost:6379"
