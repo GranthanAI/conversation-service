@@ -17,6 +17,7 @@ from app.services.custom_mode_service import CustomModeService
 from app.services.mode_catalog import mode_catalog
 from app.services.branch_context_service import BranchContextService
 from app.services.preferences_service import PreferencesService
+from app.repositories.notes_repository import NotesRepository
 
 from app.services.cache_service import CacheService
 from app.services.conversation_service import ConversationService
@@ -103,6 +104,10 @@ def get_branch_context_service(
     message_repo: CassandraMessageRepository = Depends(get_message_repository),
 ) -> BranchContextService:
     return BranchContextService(conversations, message_repo)
+
+def get_notes_repository(session: AsyncSession = Depends(get_db)) -> NotesRepository:
+    """PostgreSQL conversation-notes repository bound to the request-scoped session."""
+    return NotesRepository(session)
 
 def get_message_service(
     repo: CassandraMessageRepository = Depends(get_message_repository),

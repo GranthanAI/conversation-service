@@ -38,7 +38,7 @@ def migrated_url(database_url) -> str:
 async def engine(migrated_url):
     eng = create_async_engine(migrated_url, pool_size=10, max_overflow=10)
     async with eng.begin() as conn:
-        await conn.execute(text("TRUNCATE user_preferences, custom_modes, artifact_refs, artifacts, export_jobs CASCADE"))
+        await conn.execute(text("TRUNCATE user_preferences, custom_modes, artifact_refs, artifacts, export_jobs, conversation_notes CASCADE"))
     yield eng
     await eng.dispose()
 

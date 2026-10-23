@@ -100,6 +100,9 @@ class Settings(BaseSettings):
     EXPORT_MAX_ATTEMPTS: int = 3
     EXPORT_MAX_LIVE_PER_USER: int = 10
 
+    # Conversation notes (user-authored, PostgreSQL). The database enforces a hard ceiling of 200,000 characters.
+    NOTES_MAX_CHARS: int = 100_000
+
     # Redis settings
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_NODES: str = "localhost:6379"
@@ -172,6 +175,12 @@ class Settings(BaseSettings):
     # finds the key already expired and mistakes it for "response arrived".
     PENDING_RESPONSE_MARKER_GRACE_SECONDS: int = 300
     PENDING_TIMEOUT_WORKER_POLL_INTERVAL_SECONDS: float = 5.0
+
+    @model_validator(mode="after")
+    def _validate_notes_limits(self):
+        if not 1 <= self.NOTES_MAX_CHARS <= 200_000:
+            raise ValueError("NOTES_MAX_CHARS must be between 1 and 200000 (the database constraint)")
+        return self
 
     @model_validator(mode="after")
     def _fail_fast_on_unsafe_production_config(self):
