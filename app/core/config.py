@@ -103,6 +103,10 @@ class Settings(BaseSettings):
     # Conversation notes (user-authored, PostgreSQL). The database enforces a hard ceiling of 200,000 characters.
     NOTES_MAX_CHARS: int = 100_000
 
+    # Edited copies of code/text blocks in AI answers (PostgreSQL); same 200,000-character database ceiling.
+    SOURCE_EDIT_MAX_CHARS: int = 100_000
+    SOURCE_EDIT_MAX_PER_CONVERSATION: int = 200
+
     # Redis settings
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_NODES: str = "localhost:6379"
@@ -180,6 +184,8 @@ class Settings(BaseSettings):
     def _validate_notes_limits(self):
         if not 1 <= self.NOTES_MAX_CHARS <= 200_000:
             raise ValueError("NOTES_MAX_CHARS must be between 1 and 200000 (the database constraint)")
+        if not 1 <= self.SOURCE_EDIT_MAX_CHARS <= 200_000:
+            raise ValueError("SOURCE_EDIT_MAX_CHARS must be between 1 and 200000 (the database constraint)")
         return self
 
     @model_validator(mode="after")
