@@ -24,6 +24,7 @@ class CreateMessageRequest(BaseModel):
     content: str = Field(..., description="Message text content", min_length=1, max_length=8000)
     mode: Optional[str] = Field(None, description="Requested generation mode, e.g. 'smart', 'default'")
     selected_tools: Optional[List[str]] = Field(None, description="Explicitly selected optional tools")
+    include_diagrams: bool = Field(False, description="Ask the model to include a Mermaid/Manim diagram when it would help")
     file_ids: Optional[List[UUID]] = Field(
         None, description="Attached File Service document_ids for Ask Files mode"
     )
@@ -65,6 +66,16 @@ class CreateMessageRequest(BaseModel):
             raise ValueError(f"At most {MAX_SELECTED_TOOLS} tools can be selected.")
         return cleaned
 
+class CitationOut(BaseModel):
+    """One persisted source reference. Mirrors the frontend `Citation`; see app/services/citations.py."""
+    file_id: str
+    source_name: str = ""
+    page_number: Optional[int] = None
+    section: Optional[str] = None
+    start_seconds: Optional[int] = None
+    end_seconds: Optional[int] = None
+
+
 class MessageResponse(BaseModel):
     """
     Serialized DTO for message entity responses.
@@ -76,6 +87,9 @@ class MessageResponse(BaseModel):
     created_at: datetime
     status: str
     file_ids: List[UUID] = Field(default_factory=list)
+    # Sources of an assistant answer (document pages / video time ranges); [] for user messages and for
+    # answers saved before citations were stored.
+    citations: List[CitationOut] = Field(default_factory=list)
     # Present on POST .../messages and .../regenerate: the assistant message that the
     # reply streams under (SSE `message_id`). Distinct from `message_id`.
     response_message_id: Optional[UUID] = None

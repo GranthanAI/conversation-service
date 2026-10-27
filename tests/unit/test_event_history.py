@@ -78,3 +78,16 @@ async def test_send_reads_history_before_the_new_rows_exist_and_survives_a_read_
 
 async def _noop():
     return None
+
+
+def test_payload_carries_include_diagrams_and_defaults_to_false():
+    svc = MessageService(repo=MagicMock(), cache_service=MagicMock())
+    args = (uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), "q")
+    assert svc._build_chat_message_created_payload(*args)["include_diagrams"] is False
+    assert svc._build_chat_message_created_payload(*args, include_diagrams=True)["include_diagrams"] is True
+
+
+def test_send_request_schema_accepts_include_diagrams_and_defaults_to_false():
+    from app.schemas.message import CreateMessageRequest
+    assert CreateMessageRequest(content="hi").include_diagrams is False
+    assert CreateMessageRequest(content="hi", include_diagrams=True).include_diagrams is True

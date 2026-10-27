@@ -83,6 +83,7 @@ async def create_message(
             user_id=conv.user_id,
             mode=payload.mode,
             selected_tools=payload.selected_tools,
+            include_diagrams=payload.include_diagrams,
             file_ids=payload.file_ids,
         )
     except Exception as e:

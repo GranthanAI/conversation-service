@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 from app.db.cassandra import cassandra_manager
 from app.models.message import Message, MessageStatus
+from app.services.citations import dumps_citations, loads_citations, sanitize_citations
 
 class CassandraMessageRepository:
     """
@@ -83,7 +84,7 @@ class CassandraMessageRepository:
         """
         if cursor:
             cql = """
-                SELECT message_id, sender, content, created_at, status, file_ids
+                SELECT message_id, sender, content, created_at, status, file_ids, citations
                 FROM messages_by_conversation
                 WHERE conversation_id = ? AND message_id < ?
                 LIMIT ?
@@ -92,7 +93,7 @@ class CassandraMessageRepository:
             rows = self.manager.session.execute(stmt, (conversation_id, cursor, limit))
         else:
             cql = """
-                SELECT message_id, sender, content, created_at, status, file_ids
+                SELECT message_id, sender, content, created_at, status, file_ids, citations
                 FROM messages_by_conversation
                 WHERE conversation_id = ?
                 LIMIT ?
@@ -111,14 +112,15 @@ class CassandraMessageRepository:
                 content=row.content,
                 created_at=row.created_at,
                 status=MessageStatus(row.status),
-                file_ids=list(row.file_ids) if row.file_ids else []
+                file_ids=list(row.file_ids) if row.file_ids else [],
+                citations=loads_citations(row.citations),
             ))
         return messages
 
     def history_upto(self, conversation_id: UUID, upto_message_id: UUID, limit: int = 50) -> List[Message]:
         """Newest-first messages up to and INCLUDING `upto_message_id` (a branch point)."""
         cql = """
-            SELECT message_id, sender, content, created_at, status, file_ids
+            SELECT message_id, sender, content, created_at, status, file_ids, citations
             FROM messages_by_conversation
             WHERE conversation_id = ? AND message_id <= ?
             LIMIT ?
@@ -135,13 +137,14 @@ class CassandraMessageRepository:
                 conversation_id=conversation_id, message_id=row.message_id, sender=row.sender,
                 content=row.content, created_at=row.created_at, status=status,
                 file_ids=list(row.file_ids) if row.file_ids else [],
+                citations=loads_citations(row.citations),
             ))
         return out
 
     def get_message(self, conversation_id: UUID, message_id: UUID) -> Optional[Message]:
         """Fetches a single message row, or None."""
         cql = """
-            SELECT sender, content, created_at, status, file_ids
+            SELECT sender, content, created_at, status, file_ids, citations
             FROM messages_by_conversation
             WHERE conversation_id = ? AND message_id = ?
         """
@@ -161,6 +164,7 @@ class CassandraMessageRepository:
             created_at=row.created_at,
             status=status,
             file_ids=list(row.file_ids) if row.file_ids else [],
+            citations=loads_citations(row.citations),
         )
 
     def delete(self, conversation_id: UUID, message_id: UUID) -> bool:
@@ -182,27 +186,40 @@ class CassandraMessageRepository:
         message_id: UUID,
         sender: str,
         content: str,
-        status: str
+        status: str,
+        citations: Optional[List[dict]] = None,
     ) -> Message:
         """
         Inserts/updates a message directly in Cassandra without staging outbox event.
+        `citations` (final assistant answers) are re-sanitized here and written in the same single-row INSERT as
+        the content, so the answer and its sources are atomic. Without citations the column is not written at
+        all (no tombstone, and it works before the column has been added).
         """
         now = datetime.now(timezone.utc)
-        cql = """
-            INSERT INTO messages_by_conversation (conversation_id, message_id, sender, content, created_at, status)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """
-        stmt = self._get_prepared("create_msg_direct", cql)
-        self.manager.session.execute(stmt, (
-            conversation_id, message_id, sender, content, now, status
-        ))
+        clean = sanitize_citations(citations) if citations else []
+        if clean:
+            cql = """
+                INSERT INTO messages_by_conversation (conversation_id, message_id, sender, content, created_at, status, citations)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """
+            stmt = self._get_prepared("create_msg_direct_citations", cql)
+            params = (conversation_id, message_id, sender, content, now, status, dumps_citations(clean))
+        else:
+            cql = """
+                INSERT INTO messages_by_conversation (conversation_id, message_id, sender, content, created_at, status)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """
+            stmt = self._get_prepared("create_msg_direct", cql)
+            params = (conversation_id, message_id, sender, content, now, status)
+        self.manager.session.execute(stmt, params)
         return Message(
             conversation_id=conversation_id,
             message_id=message_id,
             sender=sender,
             content=content,
             created_at=now,
-            status=MessageStatus(status)
+            status=MessageStatus(status),
+            citations=clean,
         )
 
     def delete_all_for_conversation(self, conversation_id: UUID) -> bool:

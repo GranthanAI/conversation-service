@@ -51,7 +51,7 @@ class FakeRepo:
         self.rows[(conv, mid)] = msg
         return msg
 
-    def create_message_direct(self, conversation_id, message_id, sender, content, status):
+    def create_message_direct(self, conversation_id, message_id, sender, content, status, citations=None):
         if status == "pending" and "placeholder" in self.fail_on:
             raise RuntimeError("cassandra unavailable (placeholder)")
         self.ops.append(("direct", message_id, sender, status))

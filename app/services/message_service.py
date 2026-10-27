@@ -86,6 +86,7 @@ class MessageService:
         defaults_applied: Optional[dict] = None,
         ancestors: Optional[List[dict]] = None,
         custom_mode: Optional[dict] = None,
+        include_diagrams: bool = False,
     ) -> dict:
         """
         Builds the flat chat.message.created payload matching llm-service's
@@ -122,6 +123,8 @@ class MessageService:
             "content": content,
             "mode_hint": mode,
             "selected_tools": selected_tools or [],
+            # Per-message opt-in (additive, schema 2.3): offer diagram blocks in any mode and nudge the model to use one if it helps.
+            "include_diagrams": bool(include_diagrams),
             "file_ids": [str(fid) for fid in file_ids] if file_ids else [],
             # Recent turns before this request (oldest first), so llm-service has the conversation even when
             # the memory service is slow or down. Optional and additive: older consumers ignore it.
@@ -150,6 +153,7 @@ class MessageService:
         mode: Optional[str] = None,
         selected_tools: Optional[List[str]] = None,
         file_ids: Optional[List[UUID]] = None,
+        include_diagrams: bool = False,
     ) -> Message:
         """
         Persists a message atomically (message + outbox event in one LOGGED BATCH) and
@@ -182,6 +186,7 @@ class MessageService:
             defaults_applied=resolved.defaults_applied,
             ancestors=ancestors,
             custom_mode=resolved.custom_mode.model_dump(mode="json") if resolved.custom_mode else None,
+            include_diagrams=include_diagrams,
         )
 
         if response_message_id:
@@ -460,10 +465,11 @@ class MessageService:
         self,
         conversation_id: UUID,
         message_id: UUID,
-        content: str
+        content: str,
+        citations: Optional[List[dict]] = None,
     ) -> Optional[Message]:
         """
-        Saves the completed assistant message and evicts the history cache. `message_id`
+        Saves the completed assistant message (with its source citations, if any) and evicts the history cache. `message_id`
         is the ASSISTANT response id. Returns None (and writes nothing) if that id
         belongs to a user message.
         """
@@ -474,7 +480,8 @@ class MessageService:
             message_id=message_id,
             sender="assistant",
             content=content,
-            status="sent"
+            status="sent",
+            **({"citations": citations} if citations else {}),
         )
         await self._invalidate_cache(conversation_id)
         return msg

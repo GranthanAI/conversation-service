@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS messages_by_conversation (
     created_at timestamp,
     status text,
     file_ids list<uuid>,
+    citations text,
     PRIMARY KEY (conversation_id, message_id)
 ) WITH CLUSTERING ORDER BY (message_id DESC);
 
@@ -48,6 +49,11 @@ CREATE TABLE IF NOT EXISTS messages_by_conversation (
 -- so a dev/prod keyspace created before this change needs the column added
 -- explicitly (this repo has no formal migration tool, so run manually):
 --   ALTER TABLE messages_by_conversation ADD file_ids list<uuid>;
+
+-- NOTE: citations (JSON text, see app/services/citations.py) was added after the table's initial deployment.
+-- Additive and nullable: old rows read as "no citations". Run once per keyspace BEFORE deploying the
+-- conversation-service version that reads/writes it (the new code SELECTs this column):
+--   ALTER TABLE messages_by_conversation ADD citations text;
 
 -- Transactional Outbox Table
 CREATE TABLE IF NOT EXISTS transactional_outbox (

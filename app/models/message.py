@@ -29,6 +29,8 @@ class Message:
     created_at: datetime
     status: MessageStatus = MessageStatus.PENDING
     file_ids: List[UUID] = field(default_factory=list)  # attached File Service document_ids, "Ask Files" mode
+    # Source references of a final assistant answer (see app/services/citations.py); [] for older messages.
+    citations: List[dict] = field(default_factory=list)
     # Set on the object returned by send()/regenerate(): the pending assistant message
     # the reply will be written to and streamed under. Not a stored column.
     response_message_id: Optional[UUID] = None

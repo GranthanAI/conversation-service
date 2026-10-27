@@ -14,6 +14,7 @@ from app.models.conversation import Conversation, ConversationStatus
 from app.models.message import Message, MessageStatus
 from app.core.logging import logger
 from app.core.config import settings
+from app.services.citations import sanitize_citations
 
 class CacheService:
     """
@@ -113,7 +114,8 @@ class CacheService:
                         content=data["content"],
                         created_at=datetime.fromisoformat(data["created_at"]),
                         status=MessageStatus(data["status"]),
-                        file_ids=[UUID(fid) for fid in data.get("file_ids", [])]
+                        file_ids=[UUID(fid) for fid in data.get("file_ids", [])],
+                        citations=sanitize_citations(data.get("citations")),
                     ))
                 return messages
         except Exception as e:
@@ -137,7 +139,8 @@ class CacheService:
                     "content": m.content,
                     "created_at": m.created_at.isoformat(),
                     "status": m.status.value,
-                    "file_ids": [str(fid) for fid in m.file_ids]
+                    "file_ids": [str(fid) for fid in m.file_ids],
+                    "citations": m.citations,
                 }))
             # Cap list length implicitly or overwrite
             await self.redis.delete(cache_key)

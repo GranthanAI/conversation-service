@@ -17,6 +17,7 @@ from app.repositories.inbox_repository import CassandraInboxRepository
 from app.repositories.conversation_repository import CassandraConversationRepository
 from app.repositories.message_repository import CassandraMessageRepository
 from app.services.cache_service import CacheService
+from app.services.citations import sanitize_citations
 from app.services.conversation_service import ConversationService
 from app.services.message_service import MessageService
 from app.services.stream_service import StreamService
@@ -237,7 +238,13 @@ async def _handle_chat_response_generated(
 
     if status == "success":
         full_content = event.get("full_content") or ""
-        written = await msg_service.finalize_assistant_message(conversation_id, response_id, full_content)
+        # Persisted with the message (the durable record); the SSE event below is only live delivery.
+        citations = sanitize_citations(event.get("citations"))
+        if citations:
+            written = await msg_service.finalize_assistant_message(
+                conversation_id, response_id, full_content, citations=citations)
+        else:
+            written = await msg_service.finalize_assistant_message(conversation_id, response_id, full_content)
         if written is None:
             logger.error("chat.response.generated refused: response_message_id belongs to a non-assistant message.",
                          message_id=str(response_id), conversation_id=conversation_id_str)
@@ -247,9 +254,9 @@ async def _handle_chat_response_generated(
             **base_payload,
             "content": "",
             "status": "completed",
-            # Retrieval sources (file/page/section) for grounded answers; not
-            # persisted with the message, so only the live stream carries them.
-            "citations": event.get("citations") or [],
+            # Retrieval sources (file/page/section) for grounded answers. Same validated list that was
+            # persisted above, so live and reloaded views agree.
+            "citations": citations,
             # Chunks and the final event travel on separate topics, so the final
             # event can overtake the last chunks; clients should replace their
             # streamed buffer with this complete text.
