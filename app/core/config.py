@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     CASSANDRA_PASSWORD: Optional[str] = None
     CASSANDRA_LOCAL_DC: str = "datacenter1"
     CASSANDRA_TIMEOUT_SECONDS: float = 5.0
+    # Replication used when the keyspace is created (`make schema`). Production requires NetworkTopologyStrategy and
+    # RF >= 3. RF unset = 3 in production, 1 elsewhere. Existing keyspaces are NOT altered; see docs/cassandra_replication.md.
+    CASSANDRA_REPLICATION_STRATEGY: str = "NetworkTopologyStrategy"
+    CASSANDRA_REPLICATION_FACTOR: Optional[int] = None
+    CASSANDRA_CONSISTENCY_READ: str = "LOCAL_QUORUM"
+    CASSANDRA_CONSISTENCY_WRITE: str = "LOCAL_QUORUM"
+    CASSANDRA_SERIAL_CONSISTENCY: str = "LOCAL_SERIAL"  # for lightweight transactions (IF ...)
 
     # PostgreSQL (authoritative store for user preferences and custom modes; Cassandra is not used for them).
     # Runtime role: DML only. Schema changes are applied separately with Alembic (`make db-migrate`), never at startup.
@@ -186,6 +193,18 @@ class Settings(BaseSettings):
             raise ValueError("NOTES_MAX_CHARS must be between 1 and 200000 (the database constraint)")
         if not 1 <= self.SOURCE_EDIT_MAX_CHARS <= 200_000:
             raise ValueError("SOURCE_EDIT_MAX_CHARS must be between 1 and 200000 (the database constraint)")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_cassandra_config(self):
+        from app.db.keyspace import validate_cassandra_settings
+        problems = validate_cassandra_settings(
+            self.ENVIRONMENT, self.CASSANDRA_REPLICATION_STRATEGY, self.CASSANDRA_REPLICATION_FACTOR,
+            self.CASSANDRA_KEYSPACE, self.CASSANDRA_LOCAL_DC, self.CASSANDRA_CONSISTENCY_READ,
+            self.CASSANDRA_CONSISTENCY_WRITE, self.CASSANDRA_SERIAL_CONSISTENCY,
+        )
+        if problems:
+            raise ValueError("Invalid Cassandra configuration: " + "; ".join(problems))
         return self
 
     @model_validator(mode="after")

@@ -4,13 +4,57 @@ Handles session pools creation, keyspace declarations, and connection lifecycle 
 """
 
 from typing import Optional
-from cassandra.cluster import Cluster, Session
+from cassandra import ConsistencyLevel
+from cassandra.cluster import Cluster, Session, ExecutionProfile, EXEC_PROFILE_DEFAULT
+from cassandra.query import SimpleStatement, Statement
 from cassandra.io.asyncioreactor import AsyncioConnection
 Cluster.connection_class = AsyncioConnection
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.policies import DCAwareRoundRobinPolicy
 from app.core.config import settings
 from app.core.logging import logger
+from app.db.keyspace import is_read_query
+
+
+class ConsistencySession:
+    """Thin proxy over a driver Session that applies CASSANDRA_CONSISTENCY_READ to SELECTs.
+
+    Everything else (writes, batches, LWTs) uses the cluster's default execution profile, which carries
+    CASSANDRA_CONSISTENCY_WRITE and CASSANDRA_SERIAL_CONSISTENCY. All other attributes are delegated unchanged."""
+
+    def __init__(self, session: Session, read_cl: int):
+        self._session = session
+        self._read_cl = read_cl
+
+    def __getattr__(self, name):
+        return getattr(self._session, name)
+
+    def _query_text(self, query) -> str:
+        if isinstance(query, str):
+            return query
+        text = getattr(query, "query_string", None)
+        if text is None and getattr(query, "prepared_statement", None) is not None:
+            text = query.prepared_statement.query_string
+        return text or ""
+
+    def _apply(self, query):
+        if isinstance(query, str):
+            return SimpleStatement(query, consistency_level=self._read_cl) if is_read_query(query) else query
+        if isinstance(query, Statement) and query.consistency_level is None and is_read_query(self._query_text(query)):
+            query.consistency_level = self._read_cl
+        return query
+
+    def prepare(self, query, *args, **kwargs):
+        prepared = self._session.prepare(query, *args, **kwargs)
+        if is_read_query(self._query_text(prepared)):
+            prepared.consistency_level = self._read_cl
+        return prepared
+
+    def execute(self, query, *args, **kwargs):
+        return self._session.execute(self._apply(query), *args, **kwargs)
+
+    def execute_async(self, query, *args, **kwargs):
+        return self._session.execute_async(self._apply(query), *args, **kwargs)
 
 class CassandraClientManager:
     """
@@ -38,15 +82,23 @@ class CassandraClientManager:
             logger.info("Initializing Cassandra connection pool...",
                         hosts=contact_points, port=settings.CASSANDRA_PORT)
 
+            profile = ExecutionProfile(
+                load_balancing_policy=lb_policy,
+                consistency_level=ConsistencyLevel.name_to_value[settings.CASSANDRA_CONSISTENCY_WRITE],
+                serial_consistency_level=ConsistencyLevel.name_to_value[settings.CASSANDRA_SERIAL_CONSISTENCY],
+            )
             self.cluster = Cluster(
                 contact_points=contact_points,
                 port=settings.CASSANDRA_PORT,
                 auth_provider=auth_provider,
-                load_balancing_policy=lb_policy,
+                execution_profiles={EXEC_PROFILE_DEFAULT: profile},
                 connect_timeout=settings.CASSANDRA_TIMEOUT_SECONDS
             )
             # Establish session bound to keyspace
-            self.session = self.cluster.connect(settings.CASSANDRA_KEYSPACE)
+            self.session = ConsistencySession(
+                self.cluster.connect(settings.CASSANDRA_KEYSPACE),
+                ConsistencyLevel.name_to_value[settings.CASSANDRA_CONSISTENCY_READ],
+            )
             logger.info("Cassandra database session established successfully.")
         except Exception as e:
             logger.error("Failed to connect to Cassandra cluster", error=str(e))

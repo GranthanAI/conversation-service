@@ -1,6 +1,6 @@
--- Create Keyspace
-CREATE KEYSPACE IF NOT EXISTS graphgpt_conversations
-WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+-- The keyspace is created by `make schema` from CASSANDRA_REPLICATION_STRATEGY / CASSANDRA_LOCAL_DC /
+-- CASSANDRA_REPLICATION_FACTOR (python -m app.db.keyspace); it is no longer hard-coded here.
+-- Existing clusters: see docs/cassandra_replication.md (ALTER KEYSPACE + nodetool repair).
 
 USE graphgpt_conversations;
 
