@@ -247,7 +247,7 @@ class MessageService:
 
     @staticmethod
     def _format_history(messages_newest_first: List[Message]) -> List[dict]:
-        """Newest-first rows -> oldest-first [{role, content}], keeping only finished user/assistant text.
+        """Newest-first rows -> oldest-first [{role, content, message_id}], keeping only finished user/assistant text.
         Pending placeholders, failed replies and system/summary rows are skipped; each message and the
         total are size-capped so the event stays small."""
         picked: List[dict] = []
@@ -263,7 +263,8 @@ class MessageService:
             if budget - len(text) < 0 and picked:
                 break
             budget -= len(text)
-            picked.append({"role": m.sender, "content": text})
+            # message_id is additive: lets the LLM service recognise the same turn arriving from memory-service too.
+            picked.append({"role": m.sender, "content": text, "message_id": str(m.message_id)})
             if len(picked) >= HISTORY_EVENT_MAX_MESSAGES:
                 break
         picked.reverse()

@@ -26,10 +26,12 @@ def test_history_is_chronological_and_keeps_only_finished_user_and_assistant_tex
         _m("assistant", "Use duckduckgo-search."),
         _m("user", "Which library?"),
     ]
-    assert MessageService._format_history(newest_first) == [
-        {"role": "user", "content": "Which library?"},
-        {"role": "assistant", "content": "Use duckduckgo-search."},
+    assert [(h["role"], h["content"]) for h in MessageService._format_history(newest_first)] == [
+        ("user", "Which library?"),
+        ("assistant", "Use duckduckgo-search."),
     ]
+    # additive: every entry also carries the id of the stored message
+    assert all(h["message_id"] for h in MessageService._format_history(newest_first))
 
 
 def test_history_is_capped_by_count_message_size_and_total_size(monkeypatch):
@@ -67,7 +69,8 @@ async def test_send_reads_history_before_the_new_rows_exist_and_survives_a_read_
     svc._invalidate_cache = MagicMock(side_effect=lambda *a, **k: _noop())
     await svc.send(uuid.uuid4(), uuid.uuid4(), "user", "follow-up", user_id=uuid.uuid4())
     payload = json.loads(repo.create_with_outbox.call_args.kwargs["outbox_payload"])
-    assert payload["history"] == [{"role": "user", "content": "Q1"}, {"role": "assistant", "content": "A1"}]
+    assert [(h["role"], h["content"]) for h in payload["history"]] == [("user", "Q1"), ("assistant", "A1")]
+    assert all(h["message_id"] for h in payload["history"])           # additive field
     # the history was read before the pending placeholder was created
     assert repo.history.called
 
