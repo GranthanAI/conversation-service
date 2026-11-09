@@ -159,3 +159,77 @@ make kafka-log-msg-created
 # Or directly using Docker CLI:
 docker exec -it graphgpt-kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic chat.message.created --from-beginning
 ```
+
+## Billing integration (plans, limits, model choice)
+
+This service is the main enforcement point for message limits (integration plan `billing-service/docs/Integrations`, phase P6).
+Everything below is **off by default**: with `BILLING_ENFORCEMENT=off` the service behaves exactly as before (the
+`chat.message.created` payload differs only in `schema_version: "2.4"`; the `billing` block is omitted).
+
+### Settings
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `BILLING_GRPC_TARGET` | `127.0.0.1:50061` | billing `BillingInternal` gRPC (use `127.0.0.1`, not `localhost`, on Windows) |
+| `BILLING_SERVICE_TOKEN` | empty | this service's token (`authorization: Bearer ...`), printed by billing's `dev_up.sh` |
+| `BILLING_ENFORCEMENT` | `off` | `off` \| `shadow` \| `enforce` |
+| `ENTITLEMENTS_CACHE_SECONDS` | `60` | per-user entitlement cache in Redis (`ent:{user_id}`) |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | **on Windows set `127.0.0.1:9092`** |
+
+### Enforcement modes and rollout order
+
+1. **`off`** (default): no billing call, no service-owned plan limits, no `billing` block.
+2. **`shadow`**: every send / regenerate calls `CheckAndReserve`, logs `billing_shadow_decision{decision,reason}` and **always
+   proceeds**. An allow carries the grant (`enforcement: "shadow"`); a deny or failure carries a block with `hold_id` and
+   `granted_group` null, so llm-service keeps its legacy routing. Service-owned limits are decided and logged
+   (`plan_limit_shadow_decision`) but never refused. Run here until the decisions and billing's usage rows look right.
+3. **`enforce`**: a deny is returned to the user and **nothing is persisted**; service-owned limits refuse with 403.
+
+Order of one send (strict): resolve preferences and model, service-owned limits (no side effects), reserve with billing,
+persist + outbox, and on any failure after the reserve `Release(reason="send_failed")` then re-raise. A regenerate reserves
+too, under a new request id. Denied responses are not stored in the idempotency cache, and an idempotent replay of an
+allowed send never reserves twice.
+
+Billing unreachable in `enforce` (breaker open: 5 consecutive failures or timeouts, half-open after 30 s): **degraded mode**
+allows Auto or a Fast model only, at most 10 messages per user per IST day (Redis `billing:degraded:{uid}:{yyyymmdd}`,
+48 h TTL); an explicit non-Fast model or the 11th message gets `503 billing_unavailable`. Entitlements fall back to the
+last cached value for up to 1 hour, then to the bundled Free limits (`app/core/plan_defaults.py`, kept equal to billing's
+`plans.yaml` by a test).
+
+### Errors
+
+Billing denies: `429 limit.daily`, `429 limit.monthly`, `403 plan.model_not_included`, `403 account.blocked`,
+`402 credits.empty`, `402 credits.spend_cap`, `402 credits.member_cap`, `503 billing.degraded`, as
+`{"detail": {"code": "billing_denied", "reason": ..., "message_key": ..., "message": ..., "upgrade_to": ...}}`.
+Service-owned limits: `403 {"detail": {"code": "billing_denied", "reason": "plan_limit", "limit": "<name>", "message_key": "limit.<name>", ...}}`.
+English copy lives in `app/core/billing_messages.py`.
+
+### Limits this service enforces (`-1` = unlimited; never deletes or hides data)
+
+| Limit | Rule |
+| --- | --- |
+| `messages_per_conversation` | USER messages in the conversation's own turns (inherited branch history excluded; regenerate adds none). A Postgres counter row per conversation, initialised lazily from one Cassandra count, incremented in the send transaction |
+| `branches_per_tree` | a branch is a conversation with a `parent_conversation_id`; the tree's existing non-deleted branches are counted when one is created |
+| `documents_per_tree` | distinct document ids attached anywhere in the tree (`tree_documents`); a send is refused when it attaches new documents that would exceed the limit |
+| `custom_modes` | active (non-archived) custom modes, checked atomically on create |
+| `mode_instruction_chars` | instruction length on custom-mode create/update and on `personal_instructions` |
+
+When a plan shrinks, existing content stays readable and editable; only creating more is refused.
+
+### Model choice
+
+`POST .../messages` and `POST .../messages/{id}/regenerate` accept an optional `model` (`"auto"` or a catalog model id,
+`[a-z0-9./-]{1,64}`, format-checked only). Without it the saved `default_model` (preferences, default `"auto"`) applies.
+An explicit model that billing refuses is returned to the user; a refused **saved default** is retried once as Auto and
+`defaults_applied.model` is `true`. The answering model is stored on the assistant message (`model`, `model_group`) from
+llm-service's 2.2 events and shown in history and the final SSE event; `usage.threshold_reached` from billing becomes an
+SSE `notice` event on the user's open streams.
+
+### Stubs, schema and metrics
+
+- Billing proto: vendored in `proto/billing/` (commit hash in its header). Regenerate the stubs with `make proto`, or on
+  Windows without make: `.venv\Scripts\python scripts\gen_billing_proto.py`.
+- Apply schema changes before deploying: `make schema` (adds nullable `model`, `model_group` columns; idempotent) and
+  `make db-migrate` (Alembic 0005 `default_model`, 0006 counters and `tree_documents`).
+- `GET /metrics` (Prometheus text): `billing_reserve_total{mode,decision,reason}`, `billing_reserve_seconds`,
+  `billing_breaker_open`, `billing_degraded_messages_total`, `billing_release_total{reason}`, `plan_limit_denied_total{limit}`.
