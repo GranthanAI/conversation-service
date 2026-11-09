@@ -48,7 +48,8 @@ class ConversationService:
         return conv
 
     async def create(self, user_id: UUID, title: str, parent_conversation_id: Optional[UUID] = None,
-                     branch_message_id: Optional[UUID] = None, message_repo=None) -> Conversation:
+                     branch_message_id: Optional[UUID] = None, message_repo=None,
+                     plan_limits=None) -> Conversation:
         """
         Creates a conversation atomically alongside its outbox task,
         writes through to cache, and publishes directly to Kafka.
@@ -62,6 +63,8 @@ class ConversationService:
                 raise ValueError("Parent conversation is not active.")
             if parent_conv.user_id != user_id:
                 raise PermissionError("Access to parent conversation denied.")
+            if plan_limits is not None:
+                await plan_limits.check_new_branch(user_id, parent_conversation_id)     # 403 plan_limit
             # Branch point: an explicit message must belong to the parent; otherwise the parent's latest
             # message right now is frozen as the boundary, so later parent messages never leak in.
             if message_repo is not None:

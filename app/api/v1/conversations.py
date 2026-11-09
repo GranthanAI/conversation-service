@@ -13,7 +13,7 @@ from app.security import (
     require_conversation_owner,
     CurrentUser
 )
-from app.api.deps import get_branch_context_service, get_conversation_service, get_message_repository
+from app.api.deps import get_branch_context_service, get_conversation_service, get_message_repository, get_plan_limit_service
 from app.services.branch_context_service import BranchContextService
 from app.services.conversation_service import ConversationService
 from app.models.conversation import Conversation
@@ -34,6 +34,7 @@ async def create_conversation(
     current_user: CurrentUser = Depends(get_current_user),
     service: ConversationService = Depends(get_conversation_service),
     message_repo=Depends(get_message_repository),
+    plan_limits=Depends(get_plan_limit_service),
 ):
     """
     Creates a new conversation catalog for the authenticated user. A branch (parent_conversation_id)
@@ -48,6 +49,7 @@ async def create_conversation(
             parent_conversation_id=payload.parent_conversation_id,
             branch_message_id=payload.branch_message_id,
             message_repo=message_repo,
+            plan_limits=plan_limits,
         )
         return conv
     except LookupError as e:

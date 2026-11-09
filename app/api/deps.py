@@ -21,6 +21,8 @@ from app.repositories.notes_repository import NotesRepository
 from app.repositories.source_edit_repository import SourceEditRepository
 
 from app.services.cache_service import CacheService
+from app.services.entitlements_service import EntitlementsService, build_entitlements_service
+from app.services.plan_limits import PlanLimitService
 from app.services.conversation_service import ConversationService
 from app.services.message_service import MessageService
 from app.services.idempotency_service import IdempotencyService
@@ -76,17 +78,9 @@ def get_custom_mode_repository(session: AsyncSession = Depends(get_db)) -> Custo
     """PostgreSQL custom-mode repository bound to the request-scoped session."""
     return CustomModeRepository(session)
 
-def get_preferences_service(
-    repo: PreferencesRepository = Depends(get_preferences_repository),
-    modes: CustomModeRepository = Depends(get_custom_mode_repository),
-) -> PreferencesService:
-    """Factory method injecting PreferencesService."""
-    return PreferencesService(repo=repo, modes=modes, catalog=mode_catalog)
-
-def get_custom_mode_service(
-    modes: CustomModeRepository = Depends(get_custom_mode_repository),
-) -> CustomModeService:
-    return CustomModeService(modes)
+def get_entitlements_service() -> EntitlementsService:
+    """Entitlements (plan limits) with the shared Redis cache."""
+    return build_entitlements_service()
 
 # --- Service Factory Injections ---
 
@@ -105,6 +99,29 @@ def get_branch_context_service(
     message_repo: CassandraMessageRepository = Depends(get_message_repository),
 ) -> BranchContextService:
     return BranchContextService(conversations, message_repo)
+
+def get_plan_limit_service(
+    session: AsyncSession = Depends(get_db),
+    entitlements: EntitlementsService = Depends(get_entitlements_service),
+    message_repo: CassandraMessageRepository = Depends(get_message_repository),
+    conversations: ConversationService = Depends(get_conversation_service),
+) -> PlanLimitService:
+    """Service-owned plan limits. Shares the request's Postgres session, so counters commit with the request."""
+    return PlanLimitService(entitlements, session=session, message_repo=message_repo, conversations=conversations)
+
+def get_preferences_service(
+    repo: PreferencesRepository = Depends(get_preferences_repository),
+    modes: CustomModeRepository = Depends(get_custom_mode_repository),
+    plan_limits: PlanLimitService = Depends(get_plan_limit_service),
+) -> PreferencesService:
+    """Factory method injecting PreferencesService."""
+    return PreferencesService(repo=repo, modes=modes, catalog=mode_catalog, plan_limits=plan_limits)
+
+def get_custom_mode_service(
+    modes: CustomModeRepository = Depends(get_custom_mode_repository),
+    plan_limits: PlanLimitService = Depends(get_plan_limit_service),
+) -> CustomModeService:
+    return CustomModeService(modes, plan_limits=plan_limits)
 
 def get_notes_repository(session: AsyncSession = Depends(get_db)) -> NotesRepository:
     """PostgreSQL conversation-notes repository bound to the request-scoped session."""

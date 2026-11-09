@@ -76,3 +76,27 @@ class UserPreferenceRecord(Base):
         CheckConstraint("char_length(personal_instructions) <= 1000", name="ck_user_preferences_instructions_len"),
         CheckConstraint("default_mode IS NULL OR default_custom_mode_id IS NULL", name="ck_user_preferences_one_default_mode"),
     )
+
+
+class ConversationMessageCounter(Base):
+    """USER messages sent in a conversation's own turns (not inherited branch history); regenerate adds nothing.
+    Created lazily from one Cassandra count the first time a limit needs it, then incremented in the send transaction."""
+
+    __tablename__ = "conversation_message_counters"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    user_message_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (CheckConstraint("user_message_count >= 0", name="ck_conv_msg_counters_nonneg"),)
+
+
+class TreeDocument(Base):
+    """Distinct File Service document ids attached anywhere in a conversation tree (root_id = the tree's root)."""
+
+    __tablename__ = "tree_documents"
+
+    root_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

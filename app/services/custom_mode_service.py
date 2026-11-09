@@ -8,7 +8,7 @@ from app.core.logging import logger
 from app.models.custom_modes import (
     CustomModeCreate, CustomModeList, CustomModeResponse, CustomModeSnapshot, CustomModeUpdate, ModeStatus,
 )
-from app.repositories.pg_repositories import CustomModeNotFoundError, CustomModeRepository
+from app.repositories.pg_repositories import CustomModeLimitError, CustomModeNotFoundError, CustomModeRepository
 
 
 class CustomModeUnavailableError(Exception):
@@ -16,13 +16,26 @@ class CustomModeUnavailableError(Exception):
 
 
 class CustomModeService:
-    def __init__(self, repo: CustomModeRepository):
+    def __init__(self, repo: CustomModeRepository, plan_limits=None):
         self.repo = repo
+        self.plan_limits = plan_limits      # PlanLimitService; None = no plan limits
 
     async def create(self, owner_id: uuid.UUID, body: CustomModeCreate) -> CustomModeResponse:
-        record = await self.repo.create(
-            owner_id, name=body.name, description=body.description, instructions=body.instructions,
-            execution_style=body.execution_style.value, max_per_user=settings.CUSTOM_MODE_MAX_PER_USER)
+        max_per_user, plan_ent = settings.CUSTOM_MODE_MAX_PER_USER, None
+        if self.plan_limits is not None:
+            await self.plan_limits.check_instruction_chars(owner_id, body.instructions)
+            plan_cap, ent = await self.plan_limits.custom_mode_limit(owner_id)
+            if plan_cap is not None and plan_cap <= max_per_user:
+                max_per_user, plan_ent = plan_cap, ent
+        kwargs = dict(name=body.name, description=body.description, instructions=body.instructions,
+                      execution_style=body.execution_style.value)
+        try:
+            record = await self.repo.create(owner_id, max_per_user=max_per_user, **kwargs)
+        except CustomModeLimitError:
+            if plan_ent is None:
+                raise
+            self.plan_limits.refuse_custom_modes(plan_ent)       # enforce: 403 plan_limit; shadow: logged, then proceed
+            record = await self.repo.create(owner_id, max_per_user=settings.CUSTOM_MODE_MAX_PER_USER, **kwargs)
         logger.info("custom_mode_created", status="ok")
         return CustomModeResponse.from_record(record)
 
@@ -44,6 +57,8 @@ class CustomModeService:
         changes = body.changes()
         if not changes:
             return await self.get(owner_id, mode_id)
+        if self.plan_limits is not None and "instructions" in changes:
+            await self.plan_limits.check_instruction_chars(owner_id, changes["instructions"])
         record = await self.repo.update(owner_id, mode_id, changes, body.version)
         return CustomModeResponse.from_record(record)
 

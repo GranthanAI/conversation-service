@@ -46,10 +46,12 @@ class ResolvedMessagePreferences:
 
 
 class PreferencesService:
-    def __init__(self, repo: PreferencesRepository, modes: CustomModeRepository, catalog: Optional[ModeCatalog] = None):
+    def __init__(self, repo: PreferencesRepository, modes: CustomModeRepository, catalog: Optional[ModeCatalog] = None,
+                 plan_limits=None):
         self.repo = repo
         self.modes = modes
         self.catalog = catalog
+        self.plan_limits = plan_limits      # PlanLimitService; None = no plan limits
 
     async def _load(self, user_id: UUID) -> tuple[UserPreferences, int, Optional[object]]:
         row = await self.repo.get(user_id)
@@ -88,6 +90,8 @@ class PreferencesService:
     async def update(self, user_id: UUID, patch: PreferencesUpdate) -> PreferencesResponse:
         """Applies only the sent fields. A given `version` must match (409 otherwise); without it the save is
         retried on top of the newest document. Either way the write is one atomic compare-and-set."""
+        if self.plan_limits is not None and patch.personal_instructions is not None:
+            await self.plan_limits.check_instruction_chars(user_id, patch.personal_instructions)    # 403 plan_limit
         attempts = 1 if patch.version is not None else 3
         for attempt in range(attempts):
             prefs, stored_version, _ = await self._load(user_id)

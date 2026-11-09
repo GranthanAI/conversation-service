@@ -167,6 +167,14 @@ class CassandraMessageRepository:
             citations=loads_citations(row.citations),
         )
 
+    def count_user_messages(self, conversation_id: UUID) -> int:
+        """USER messages in this conversation's own partition (no inherited branch history), soft-deleted rows
+        excluded. One partition scan: used once per conversation, to initialise the Postgres counter."""
+        cql = "SELECT sender, status FROM messages_by_conversation WHERE conversation_id = ?"
+        stmt = self._get_prepared("count_user_msgs", cql)
+        return sum(1 for row in self.manager.session.execute(stmt, (conversation_id,))
+                   if row.sender == "user" and row.status != "deleted")
+
     def delete(self, conversation_id: UUID, message_id: UUID) -> bool:
         """
         Soft deletes a message.
