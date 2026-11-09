@@ -116,6 +116,7 @@ class CacheService:
                         status=MessageStatus(data["status"]),
                         file_ids=[UUID(fid) for fid in data.get("file_ids", [])],
                         citations=sanitize_citations(data.get("citations")),
+                        model=data.get("model"), model_group=data.get("model_group"),
                     ))
                 return messages
         except Exception as e:
@@ -141,6 +142,7 @@ class CacheService:
                     "status": m.status.value,
                     "file_ids": [str(fid) for fid in m.file_ids],
                     "citations": m.citations,
+                    "model": m.model, "model_group": m.model_group,
                 }))
             # Cap list length implicitly or overwrite
             await self.redis.delete(cache_key)

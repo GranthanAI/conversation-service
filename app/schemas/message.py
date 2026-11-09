@@ -118,6 +118,9 @@ class MessageResponse(BaseModel):
     # Sources of an assistant answer (document pages / video time ranges); [] for user messages and for
     # answers saved before citations were stored.
     citations: List[CitationOut] = Field(default_factory=list)
+    # The catalog model (and its group: fast/smart/best/ultra) that answered; null for user messages and older answers.
+    model: Optional[str] = None
+    model_group: Optional[str] = None
     # Present on POST .../messages and .../regenerate: the assistant message that the
     # reply streams under (SSE `message_id`). Distinct from `message_id`.
     response_message_id: Optional[UUID] = None

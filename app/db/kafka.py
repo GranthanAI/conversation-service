@@ -54,6 +54,8 @@ class KafkaConnectionManager:
                     KafkaTopics.TITLE_GENERATED,
                     KafkaTopics.CHAT_RESPONSE_CHUNK,
                     KafkaTopics.CHAT_RESPONSE_GENERATED,
+                    KafkaTopics.CHAT_RESPONSE_CANCELLED,
+                    KafkaTopics.USAGE_THRESHOLD_REACHED,
                     KafkaTopics.ENTITLEMENTS_CHANGED,
                     KafkaTopics.USER_DELETED,
                     bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,

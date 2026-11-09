@@ -95,7 +95,7 @@ def test_api_get_stream_success():
     
     # Mock StreamService subscribe
     mock_stream_service = MagicMock()
-    async def mock_subscribe(conversation_id, message_id=None, since=None):
+    async def mock_subscribe(conversation_id, message_id=None, since=None, user_id=None):
         yield "data: {\"chunk\": \"Hello\"}\n\n"
         yield "data: {\"chunk\": \" World\", \"is_final\": true}\n\n"
     

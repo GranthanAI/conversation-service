@@ -532,9 +532,12 @@ class MessageService:
         message_id: UUID,
         content: str,
         citations: Optional[List[dict]] = None,
+        model: Optional[str] = None,
+        model_group: Optional[str] = None,
     ) -> Optional[Message]:
         """
-        Saves the completed assistant message (with its source citations, if any) and evicts the history cache. `message_id`
+        Saves the completed assistant message (with its source citations and the answering model, if any) and evicts
+        the history cache. `message_id`
         is the ASSISTANT response id. Returns None (and writes nothing) if that id
         belongs to a user message.
         """
@@ -547,9 +550,25 @@ class MessageService:
             content=content,
             status="sent",
             **({"citations": citations} if citations else {}),
+            **({"model": model} if model else {}),
+            **({"model_group": model_group} if model_group else {}),
         )
         await self._invalidate_cache(conversation_id)
         return msg
+
+    def is_completed_reply(self, conversation_id: UUID, message_id: UUID) -> bool:
+        """True if this assistant row already holds a real, finished answer (status sent, non-empty content)."""
+        existing = self.repo.get_message(conversation_id, message_id)
+        return bool(existing is not None and existing.sender == "assistant"
+                    and getattr(existing.status, "value", existing.status) == "sent" and existing.content)
+
+    async def record_answering_model(self, conversation_id: UUID, message_id: UUID, model: Optional[str],
+                                     model_group: Optional[str]) -> bool:
+        """Cancelled turns: store which model was answering on the existing row; content and status are untouched."""
+        done = self.repo.set_answering_model(conversation_id, message_id, model, model_group)
+        if done:
+            await self._invalidate_cache(conversation_id)
+        return done
 
     async def fail_assistant_message(
         self,

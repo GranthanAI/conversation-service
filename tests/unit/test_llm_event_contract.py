@@ -32,6 +32,7 @@ def _deps():
     stream.publish_token = AsyncMock()
     msgs = MagicMock()
     msgs.finalize_assistant_message = AsyncMock(return_value=object())
+    msgs.is_completed_reply = MagicMock(return_value=False)
     msgs.fail_assistant_message = AsyncMock(return_value=object())
     msgs.clear_pending_response = AsyncMock()
     return inbox, stream, msgs
@@ -79,7 +80,7 @@ async def test_final_event_persists_under_the_response_id_with_citations():
     assert payload["is_final"] is True and payload["status"] == "completed"
     assert payload["full_content"] == "Hello world"
     assert payload["citations"][0]["source_name"] == "a.pdf"
-    inbox.save.assert_called_once()
+    assert inbox.save.call_count == 2    # the event (by response id) and the request marker (duplicates by request id)
 
 
 async def test_error_event_from_llm_error_handler_fails_the_assistant_message():

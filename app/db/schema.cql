@@ -44,6 +44,12 @@ CREATE TABLE IF NOT EXISTS messages_by_conversation (
     PRIMARY KEY (conversation_id, message_id)
 ) WITH CLUSTERING ORDER BY (message_id DESC);
 
+-- Which catalog model answered (plan P6e): written from chat.response.generated / cancelled 2.2 events.
+-- Nullable and additive: old rows read as NULL. IF NOT EXISTS makes re-running `make schema` safe. Run BEFORE
+-- deploying the conversation-service version that SELECTs them.
+ALTER TABLE messages_by_conversation ADD IF NOT EXISTS model text;
+ALTER TABLE messages_by_conversation ADD IF NOT EXISTS model_group text;
+
 -- NOTE: file_ids was added after this table's initial deployment.
 -- CREATE TABLE IF NOT EXISTS is a no-op against an already-existing table,
 -- so a dev/prod keyspace created before this change needs the column added

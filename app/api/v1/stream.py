@@ -31,6 +31,7 @@ async def get_conversation_stream(
         conversation_id,
         message_id=str(message_id) if message_id else None,
         since=since,
+        user_id=conv.user_id,
     )
     return StreamingResponse(
         generator,

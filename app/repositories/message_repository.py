@@ -84,7 +84,7 @@ class CassandraMessageRepository:
         """
         if cursor:
             cql = """
-                SELECT message_id, sender, content, created_at, status, file_ids, citations
+                SELECT message_id, sender, content, created_at, status, file_ids, citations, model, model_group
                 FROM messages_by_conversation
                 WHERE conversation_id = ? AND message_id < ?
                 LIMIT ?
@@ -93,7 +93,7 @@ class CassandraMessageRepository:
             rows = self.manager.session.execute(stmt, (conversation_id, cursor, limit))
         else:
             cql = """
-                SELECT message_id, sender, content, created_at, status, file_ids, citations
+                SELECT message_id, sender, content, created_at, status, file_ids, citations, model, model_group
                 FROM messages_by_conversation
                 WHERE conversation_id = ?
                 LIMIT ?
@@ -114,13 +114,14 @@ class CassandraMessageRepository:
                 status=MessageStatus(row.status),
                 file_ids=list(row.file_ids) if row.file_ids else [],
                 citations=loads_citations(row.citations),
+                model=getattr(row, 'model', None), model_group=getattr(row, 'model_group', None),
             ))
         return messages
 
     def history_upto(self, conversation_id: UUID, upto_message_id: UUID, limit: int = 50) -> List[Message]:
         """Newest-first messages up to and INCLUDING `upto_message_id` (a branch point)."""
         cql = """
-            SELECT message_id, sender, content, created_at, status, file_ids, citations
+            SELECT message_id, sender, content, created_at, status, file_ids, citations, model, model_group
             FROM messages_by_conversation
             WHERE conversation_id = ? AND message_id <= ?
             LIMIT ?
@@ -138,13 +139,14 @@ class CassandraMessageRepository:
                 content=row.content, created_at=row.created_at, status=status,
                 file_ids=list(row.file_ids) if row.file_ids else [],
                 citations=loads_citations(row.citations),
+                model=getattr(row, 'model', None), model_group=getattr(row, 'model_group', None),
             ))
         return out
 
     def get_message(self, conversation_id: UUID, message_id: UUID) -> Optional[Message]:
         """Fetches a single message row, or None."""
         cql = """
-            SELECT sender, content, created_at, status, file_ids, citations
+            SELECT sender, content, created_at, status, file_ids, citations, model, model_group
             FROM messages_by_conversation
             WHERE conversation_id = ? AND message_id = ?
         """
@@ -165,6 +167,7 @@ class CassandraMessageRepository:
             status=status,
             file_ids=list(row.file_ids) if row.file_ids else [],
             citations=loads_citations(row.citations),
+                model=getattr(row, 'model', None), model_group=getattr(row, 'model_group', None),
         )
 
     def count_user_messages(self, conversation_id: UUID) -> int:
@@ -196,30 +199,37 @@ class CassandraMessageRepository:
         content: str,
         status: str,
         citations: Optional[List[dict]] = None,
+        model: Optional[str] = None,
+        model_group: Optional[str] = None,
     ) -> Message:
         """
         Inserts/updates a message directly in Cassandra without staging outbox event.
+        `model` / `model_group` (the catalog model that answered) are written in the same single-row INSERT, and like
+        citations only when given (no tombstones, and older rows keep NULL).
         `citations` (final assistant answers) are re-sanitized here and written in the same single-row INSERT as
         the content, so the answer and its sources are atomic. Without citations the column is not written at
         all (no tombstone, and it works before the column has been added).
         """
         now = datetime.now(timezone.utc)
         clean = sanitize_citations(citations) if citations else []
+        columns = ["conversation_id", "message_id", "sender", "content", "created_at", "status"]
+        params = [conversation_id, message_id, sender, content, now, status]
+        name = "create_msg_direct"
         if clean:
-            cql = """
-                INSERT INTO messages_by_conversation (conversation_id, message_id, sender, content, created_at, status, citations)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """
-            stmt = self._get_prepared("create_msg_direct_citations", cql)
-            params = (conversation_id, message_id, sender, content, now, status, dumps_citations(clean))
-        else:
-            cql = """
-                INSERT INTO messages_by_conversation (conversation_id, message_id, sender, content, created_at, status)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """
-            stmt = self._get_prepared("create_msg_direct", cql)
-            params = (conversation_id, message_id, sender, content, now, status)
-        self.manager.session.execute(stmt, params)
+            columns.append("citations")
+            params.append(dumps_citations(clean))
+            name += "_citations"
+        if model:
+            columns.append("model")
+            params.append(model)
+            name += "_model"
+        if model_group:
+            columns.append("model_group")
+            params.append(model_group)
+            name += "_group"
+        cql = (f"INSERT INTO messages_by_conversation ({', '.join(columns)}) "
+               f"VALUES ({', '.join('?' for _ in columns)})")
+        self.manager.session.execute(self._get_prepared(name, cql), tuple(params))
         return Message(
             conversation_id=conversation_id,
             message_id=message_id,
@@ -228,7 +238,28 @@ class CassandraMessageRepository:
             created_at=now,
             status=MessageStatus(status),
             citations=clean,
+            model=model or None,
+            model_group=model_group or None,
         )
+
+    def set_answering_model(self, conversation_id: UUID, message_id: UUID, model: Optional[str],
+                            model_group: Optional[str]) -> bool:
+        """Records which model answered on an EXISTING assistant row, without touching its content or status.
+        Returns False (and writes nothing) when the row does not exist or is not an assistant message."""
+        existing = self.get_message(conversation_id, message_id)
+        if existing is None or existing.sender != "assistant" or not (model or model_group):
+            return False
+        sets, params = [], []
+        if model:
+            sets.append("model = ?")
+            params.append(model)
+        if model_group:
+            sets.append("model_group = ?")
+            params.append(model_group)
+        cql = f"UPDATE messages_by_conversation SET {', '.join(sets)} WHERE conversation_id = ? AND message_id = ?"
+        self.manager.session.execute(self._get_prepared("set_answering_model_" + str(len(sets)) + ("m" if model else "g"), cql),
+                                     tuple(params + [conversation_id, message_id]))
+        return True
 
     def delete_all_for_conversation(self, conversation_id: UUID) -> bool:
         """

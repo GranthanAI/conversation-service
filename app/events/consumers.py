@@ -84,6 +84,16 @@ async def start_kafka_consumer():
                     await consumer.commit()
                     continue
 
+                if msg.topic == KafkaTopics.CHAT_RESPONSE_CANCELLED:
+                    await _handle_chat_response_cancelled(event, inbox_repo, msg_service)
+                    await consumer.commit()
+                    continue
+
+                if msg.topic == KafkaTopics.USAGE_THRESHOLD_REACHED:
+                    await _handle_usage_threshold(event, inbox_repo, stream_service)
+                    await consumer.commit()
+                    continue
+
                 if msg.topic in (KafkaTopics.ENTITLEMENTS_CHANGED, KafkaTopics.USER_DELETED):
                     await _handle_entitlements_event(msg.topic, event, inbox_repo, entitlements)
                     await consumer.commit()
@@ -143,6 +153,53 @@ async def _handle_entitlements_event(topic: str, event: dict, inbox_repo, entitl
     await entitlements.invalidate(user_id)
     inbox_repo.save(event_id)
     logger.info("entitlements_invalidated", topic=topic, user_id=str(user_id))
+
+
+async def _handle_chat_response_cancelled(event: dict, inbox_repo, msg_service) -> None:
+    """chat.response.cancelled (llm-service 2.2): carries no text, so nothing is finalized here (the pending watchdog
+    still settles the turn). It only records which model was answering, on the existing assistant row."""
+    response_id = _response_message_id(event, "chat.response.cancelled")
+    conversation_id_str = event.get("conversation_id")
+    if not response_id or not conversation_id_str:
+        logger.warning("chat.response.cancelled without response_message_id or conversation_id. Ignoring.",
+                       request_message_id=event.get("message_id"))
+        return
+    dedup_id = _derive_event_id("chat.response.cancelled", str(response_id))
+    if inbox_repo.exists(dedup_id):
+        logger.info("Duplicate chat.response.cancelled skipped via inbox dedup.", message_id=str(response_id))
+        return
+    await msg_service.record_answering_model(
+        UUID(conversation_id_str), response_id, event.get("model"), event.get("model_group"))
+    inbox_repo.save(dedup_id)
+
+
+async def _handle_usage_threshold(event: dict, inbox_repo, stream_service) -> None:
+    """usage.threshold_reached (billing): push an SSE `notice` {notice_key, metric, used, limit, resets_at} to the
+    user's open streams. With no open stream it is dropped (a notice is only useful live)."""
+    body = event.get("payload") if isinstance(event.get("payload"), dict) else event
+    try:
+        user_id = UUID(str(body.get("user_id")))
+    except ValueError:
+        logger.warning("usage.threshold_reached without a valid user_id. Skipping.")
+        return
+    metric, percent = body.get("limit"), body.get("percent")
+    try:
+        event_id = UUID(str(event.get("event_id") or body.get("event_id")))
+    except ValueError:      # billing's payload may not carry an event_id: one notice per user, limit, percent and period
+        event_id = _derive_event_id("usage.threshold_reached", str(user_id), str(metric), str(percent),
+                                    str(body.get("resets_at")))
+    if inbox_repo.exists(event_id):
+        logger.info("Duplicate usage.threshold_reached skipped via inbox dedup.", event_id=str(event_id))
+        return
+    delivered = await stream_service.publish_user_notice(user_id, {
+        "notice_key": f"usage.threshold_{percent}",
+        "metric": metric,
+        "used": body.get("used"),
+        "limit": body.get("allowed"),
+        "resets_at": body.get("resets_at"),
+    })
+    inbox_repo.save(event_id)
+    logger.info("usage_notice_pushed", user_id=str(user_id), metric=metric, percent=percent, streams=delivered)
 
 
 def _response_message_id(event: dict, kind: str):
@@ -245,6 +302,14 @@ async def _handle_chat_response_generated(
     if inbox_repo.exists(dedup_id):
         logger.info("Duplicate chat.response.generated skipped via inbox dedup.", message_id=str(response_id))
         return
+    # llm-service delivers at-least-once; after a restart the same request can arrive again, possibly with a NEW
+    # event_id. The request is the identity: once a request's answer is finished, any later terminal event for it is a
+    # duplicate (it must not create another message or overwrite the completed one).
+    request_done_id = _derive_event_id("request.completed", str(request_message_id)) if request_message_id else None
+    if request_done_id is not None and inbox_repo.exists(request_done_id):
+        logger.info("Duplicate terminal event for an already answered request ignored.",
+                    request_message_id=request_message_id, message_id=str(response_id))
+        return
 
     conversation_id = UUID(conversation_id_str)
     status = event.get("status", "success")
@@ -262,14 +327,23 @@ async def _handle_chat_response_generated(
     }
 
     if status == "success":
+        if msg_service.is_completed_reply(UUID(conversation_id_str), response_id):
+            logger.info("Terminal event for an already completed reply ignored.", message_id=str(response_id))
+            await msg_service.clear_pending_response(response_id)
+            inbox_repo.save(dedup_id)
+            if request_done_id is not None:
+                inbox_repo.save(request_done_id)
+            return
         full_content = event.get("full_content") or ""
+        model, model_group = event.get("model") or None, event.get("model_group") or None
         # Persisted with the message (the durable record); the SSE event below is only live delivery.
         citations = sanitize_citations(event.get("citations"))
+        extra = {k: v for k, v in (("model", model), ("model_group", model_group)) if v}    # 2.1 events carry neither
         if citations:
             written = await msg_service.finalize_assistant_message(
-                conversation_id, response_id, full_content, citations=citations)
+                conversation_id, response_id, full_content, citations=citations, **extra)
         else:
-            written = await msg_service.finalize_assistant_message(conversation_id, response_id, full_content)
+            written = await msg_service.finalize_assistant_message(conversation_id, response_id, full_content, **extra)
         if written is None:
             logger.error("chat.response.generated refused: response_message_id belongs to a non-assistant message.",
                          message_id=str(response_id), conversation_id=conversation_id_str)
@@ -286,7 +360,11 @@ async def _handle_chat_response_generated(
             # event can overtake the last chunks; clients should replace their
             # streamed buffer with this complete text.
             "full_content": full_content,
+            # Which catalog model answered (llm-service 2.2). Absent for older events.
+            **extra,
         })
+        if request_done_id is not None:
+            inbox_repo.save(request_done_id)
         logger.info("Processed successful chat.response.generated from Kafka", message_id=str(response_id))
     else:
         error_message = event.get("error_message") or "Generation failed."

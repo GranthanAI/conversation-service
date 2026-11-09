@@ -23,6 +23,21 @@ class StreamService:
         self.redis = redis_client
         self.pod_id = f"pod_{uuid.uuid4().hex[:8]}"
 
+    def _get_user_channel(self, user_id: UUID) -> str:
+        return f"user:{user_id}:stream"
+
+    async def publish_user_notice(self, user_id: UUID, notice: dict) -> int:
+        """Pushes an SSE `notice` event to every stream the user currently has open (any conversation, any replica).
+        Not logged for replay: with no open stream it is simply dropped. Returns how many streams received it."""
+        if not self.redis:
+            return 0
+        try:
+            return int(await self.redis.publish(self._get_user_channel(user_id),
+                                                json.dumps({"sse_event": "notice", "data": notice})))
+        except Exception as e:
+            logger.warning("Failed to publish user notice", user_id=str(user_id), error=str(e))
+            return 0
+
     def _get_ownership_key(self, conversation_id: UUID) -> str:
         return f"stream:{conversation_id}"
 
@@ -142,6 +157,11 @@ class StreamService:
         return events
 
     @staticmethod
+    def format_notice(data: dict) -> str:
+        """SSE frame of a user-level notice: `event: notice` (no id: it is not part of a turn's replay log)."""
+        return f"event: notice\ndata: {json.dumps(data)}\n\n"
+
+    @staticmethod
     def format_sse(data: dict) -> str:
         """SSE frame; `id:` lets EventSource-style clients resume with Last-Event-ID."""
         eid = data.get("event_id")
@@ -152,6 +172,7 @@ class StreamService:
         conversation_id: UUID,
         message_id: Optional[str] = None,
         since: Optional[str] = None,
+        user_id: Optional[UUID] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Subscribes to the conversation's Redis PubSub channel and yields SSE-formatted events.
@@ -162,6 +183,8 @@ class StreamService:
         log, then live events continue (deduplicated by `event_id`), and the stream ends after
         that message's terminal event or STREAM_MAX_CONNECTION_SECONDS. Without `message_id`
         the original behaviour applies (live only; ends at the first terminal event).
+
+        With `user_id` the connection also receives that user's `notice` events (usage thresholds) while it is open.
         """
         if not self.redis:
             # Yield error event and exit if Redis is unavailable
@@ -171,6 +194,9 @@ class StreamService:
         channel_name = self._get_pubsub_channel(conversation_id)
         pubsub = self.redis.pubsub()
         await pubsub.subscribe(channel_name)
+        user_channel = self._get_user_channel(user_id) if user_id else None
+        if user_channel:
+            await pubsub.subscribe(user_channel)
 
         # Claim initial ownership
         await self.register_ownership(conversation_id)
@@ -217,6 +243,10 @@ class StreamService:
                         # Parse data to ensure correctness
                         data = json.loads(data_str)
 
+                        if data.get("sse_event") == "notice":      # user-level, not tied to any turn
+                            yield self.format_notice(data.get("data") or {})
+                            continue
+
                         if message_id:
                             if data.get("message_id") != message_id:
                                 continue
@@ -243,5 +273,7 @@ class StreamService:
             # Cleanup
             hb_task.cancel()
             await pubsub.unsubscribe(channel_name)
+            if user_channel:
+                await pubsub.unsubscribe(user_channel)
             await pubsub.close()
             await self.release_ownership(conversation_id)

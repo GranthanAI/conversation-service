@@ -144,6 +144,7 @@ def _deps():
     stream.publish_token = AsyncMock()
     msgs = MagicMock()
     msgs.finalize_assistant_message = AsyncMock(return_value=object())
+    msgs.is_completed_reply = MagicMock(return_value=False)
     msgs.clear_pending_response = AsyncMock()
     return inbox, stream, msgs
 
