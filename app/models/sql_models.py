@@ -56,6 +56,7 @@ class UserPreferenceRecord(Base):
     default_custom_mode_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("custom_modes.mode_id", ondelete="SET NULL"), nullable=True)
     default_tools: Mapped[list[str]] = mapped_column(ARRAY(String(64)), nullable=False, server_default=text("'{}'"))
+    default_model: Mapped[str] = mapped_column(String(64), nullable=False, server_default="auto")
     answer_length: Mapped[str] = mapped_column(String(16), nullable=False, server_default="balanced")
     tone: Mapped[str] = mapped_column(String(16), nullable=False, server_default="professional")
     language: Mapped[str] = mapped_column(String(16), nullable=False, server_default="auto")

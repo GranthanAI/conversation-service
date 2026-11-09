@@ -42,6 +42,7 @@ class ResolvedMessagePreferences:
     generation: dict = field(default_factory=dict)
     version: int = 0
     custom_mode: Optional[CustomModeSnapshot] = None
+    default_model: str = "auto"
 
 
 class PreferencesService:
@@ -157,4 +158,5 @@ class PreferencesService:
 
         return ResolvedMessagePreferences(
             mode=resolved_mode, selected_tools=resolved_tools, defaults_applied=defaults_applied,
-            generation=generation_preferences(prefs), version=version, custom_mode=snapshot)
+            generation=generation_preferences(prefs), version=version, custom_mode=snapshot,
+            default_model=prefs.default_model)

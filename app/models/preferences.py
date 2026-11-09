@@ -83,6 +83,8 @@ PERSONAL_INSTRUCTIONS_MAX = 1000
 MAX_DEFAULT_TOOLS = 10  # shape bound; the live limit comes from llm-service discovery
 _TOOL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
 _MODE_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+# Model choice: "auto" or a catalog model id. Format only; billing decides availability.
+MODEL_ID = re.compile(r"^[a-z0-9./-]{1,64}$")
 # Control characters other than tab / newline are stripped from free text.
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -99,6 +101,18 @@ def _clean_mode(v: Optional[str]) -> Optional[str]:
         return v         # existence / ownership is checked against PostgreSQL by the service
     if not _MODE_ID.fullmatch(v):
         raise ValueError("Invalid mode.")
+    return v
+
+
+def clean_model(v: Optional[str]) -> str:
+    """'auto' (also for null/empty) or a catalog model id in the allowed format."""
+    if v is None:
+        return "auto"
+    v = v.strip().lower()
+    if v in ("", "auto"):
+        return "auto"
+    if not MODEL_ID.fullmatch(v):
+        raise ValueError("Invalid model.")
     return v
 
 
@@ -131,6 +145,7 @@ class UserPreferences(BaseModel):
 
     default_mode: Optional[str] = None  # None = Auto
     default_tools: List[str] = Field(default_factory=list)
+    default_model: str = "auto"  # "auto" or a catalog model id; availability is decided by billing at send time
     answer_length: AnswerLength = AnswerLength.BALANCED
     tone: Tone = Tone.PROFESSIONAL
     language: str = "auto"
@@ -174,6 +189,11 @@ class UserPreferences(BaseModel):
     def _tools(cls, v):
         return _clean_tools(v) or []
 
+    @field_validator("default_model", mode="before")
+    @classmethod
+    def _model(cls, v):
+        return clean_model(v)
+
     @field_validator("personal_instructions", mode="before")
     @classmethod
     def _instructions(cls, v):
@@ -190,6 +210,7 @@ class PreferencesUpdate(BaseModel):
     version: Optional[int] = Field(None, ge=0)
     default_mode: Optional[str] = None
     default_tools: Optional[List[str]] = None
+    default_model: Optional[str] = None
     answer_length: Optional[AnswerLength] = None
     tone: Optional[Tone] = None
     language: Optional[str] = None
@@ -209,6 +230,11 @@ class PreferencesUpdate(BaseModel):
     @classmethod
     def _tools(cls, v):
         return _clean_tools(v)
+
+    @field_validator("default_model")
+    @classmethod
+    def _model(cls, v):
+        return None if v is None else clean_model(v)
 
     @field_validator("language")
     @classmethod

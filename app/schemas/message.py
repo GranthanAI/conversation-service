@@ -16,6 +16,7 @@ _TOOL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
 MAX_SELECTED_TOOLS = 5  # must equal llm-service app/tools/selection.py MAX_SELECTED_TOOLS
 
 from app.models.custom_modes import parse_custom_ref
+from app.models.preferences import clean_model
 
 class CreateMessageRequest(BaseModel):
     """
@@ -28,6 +29,13 @@ class CreateMessageRequest(BaseModel):
     file_ids: Optional[List[UUID]] = Field(
         None, description="Attached File Service document_ids for Ask Files mode"
     )
+    model: Optional[str] = Field(
+        None, description="'auto' or a catalog model id ([a-z0-9./-]{1,64}); omitted = the saved default_model. "
+                          "Billing decides whether the plan includes it.")
+
+    @field_validator("model")
+    def validate_model(cls, v: Optional[str]) -> Optional[str]:
+        return None if v is None else clean_model(v)
 
     @field_validator("content")
     def validate_content(cls, v: str) -> str:
@@ -65,6 +73,15 @@ class CreateMessageRequest(BaseModel):
         if len(cleaned) > MAX_SELECTED_TOOLS:
             raise ValueError(f"At most {MAX_SELECTED_TOOLS} tools can be selected.")
         return cleaned
+
+class RegenerateRequest(BaseModel):
+    """Optional body of POST .../regenerate."""
+    model: Optional[str] = Field(None, description="'auto' or a catalog model id; omitted = the saved default_model")
+
+    @field_validator("model")
+    def validate_model(cls, v: Optional[str]) -> Optional[str]:
+        return None if v is None else clean_model(v)
+
 
 class CitationOut(BaseModel):
     """One persisted source reference. Mirrors the frontend `Citation`; see app/services/citations.py."""
