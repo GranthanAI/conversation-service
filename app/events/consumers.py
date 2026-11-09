@@ -19,6 +19,7 @@ from app.repositories.message_repository import CassandraMessageRepository
 from app.services.cache_service import CacheService
 from app.services.citations import sanitize_citations
 from app.services.conversation_service import ConversationService
+from app.services.entitlements_service import build_entitlements_service
 from app.services.message_service import MessageService
 from app.services.stream_service import StreamService
 from app.db.redis import redis_manager
@@ -54,6 +55,7 @@ async def start_kafka_consumer():
     conv_service = ConversationService(repo=conv_repo, cache_service=cache_service)
     msg_service = MessageService(repo=msg_repo, cache_service=cache_service)
     stream_service = StreamService(redis_client=redis_manager.client)
+    entitlements = build_entitlements_service()
 
     try:
         async for msg in consumer:
@@ -79,6 +81,11 @@ async def start_kafka_consumer():
                     await _handle_chat_response_generated(
                         event, inbox_repo, msg_service, stream_service
                     )
+                    await consumer.commit()
+                    continue
+
+                if msg.topic in (KafkaTopics.ENTITLEMENTS_CHANGED, KafkaTopics.USER_DELETED):
+                    await _handle_entitlements_event(msg.topic, event, inbox_repo, entitlements)
                     await consumer.commit()
                     continue
 
@@ -118,6 +125,24 @@ async def start_kafka_consumer():
         logger.info("Kafka consumer background loop shutdown signal received.")
     except Exception as e:
         logger.error("Fatal error in background Kafka consumer loop", error=str(e))
+
+
+async def _handle_entitlements_event(topic: str, event: dict, inbox_repo, entitlements) -> None:
+    """entitlements.changed (billing) and user.deleted (auth): drop the user's cached entitlements (both the 60 s key
+    and the 1 h stale key), deduplicated through the inbox on event_id. Deleting the user's conversations on
+    user.deleted is NOT done here (out of scope for P6)."""
+    event_id_raw, user_id_raw = event.get("event_id"), event.get("user_id")
+    try:
+        event_id, user_id = UUID(str(event_id_raw)), UUID(str(user_id_raw))
+    except ValueError:
+        logger.warning("Entitlement event without a valid event_id/user_id. Skipping.", topic=topic)
+        return
+    if inbox_repo.exists(event_id):
+        logger.info("Duplicate entitlement event skipped via inbox dedup.", event_id=str(event_id), topic=topic)
+        return
+    await entitlements.invalidate(user_id)
+    inbox_repo.save(event_id)
+    logger.info("entitlements_invalidated", topic=topic, user_id=str(user_id))
 
 
 def _response_message_id(event: dict, kind: str):

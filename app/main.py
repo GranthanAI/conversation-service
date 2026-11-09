@@ -96,6 +96,8 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
+    from app.clients.billing_client import billing_client
+    await billing_client.close()
     cassandra_manager.close()
     await dispose_engine()
     await redis_manager.close()
@@ -147,6 +149,12 @@ async def root_readiness(response: Response):
         return {"status": "DOWN", "details": status_info}
         
     return {"status": "UP", "details": status_info}
+
+@app.get("/metrics", tags=["Health Checks"], include_in_schema=False)
+async def metrics_endpoint():
+    """In-process counters/histograms (Prometheus text format): billing reserve, releases, plan-limit refusals."""
+    from app.telemetry.metrics import render_all
+    return Response(content=render_all(), media_type="text/plain; version=0.0.4")
 
 @app.get("/", tags=["General"])
 async def root():

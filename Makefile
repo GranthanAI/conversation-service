@@ -1,4 +1,5 @@
-.PHONY: help setup infra infra-up infra-down infra-status infra-logs-kafka schema db-create db-migrate db-migrate-prefs dev test clean
+# Windows (PowerShell or Git Bash) without make:  .venv\Scripts\python scripts\gen_billing_proto.py
+.PHONY: proto help setup infra infra-up infra-down infra-status infra-logs-kafka schema db-create db-migrate db-migrate-prefs dev test clean
 
 help:
 	@echo "========================================================================"
@@ -9,6 +10,7 @@ help:
 	@echo "  make infra-down       - Stop shared GraphGPT docker containers"
 	@echo "  make infra-status     - Check status of shared GraphGPT containers"
 	@echo "  make infra-logs-kafka - Follow Kafka container logs"
+	@echo "  make proto            - Regenerate billing gRPC stubs from proto/billing (Windows: .venv\Scripts\python scripts\gen_billing_proto.py)"
 	@echo "  make schema           - Wait for Cassandra readiness & apply CQL schema"
 	@echo "  make db-create        - Create conversation_service_db in the shared Postgres (idempotent)"
 	@echo "  make db-migrate       - Apply Alembic migrations (PostgreSQL: preferences + custom modes)"
@@ -41,6 +43,9 @@ infra-status:
 
 infra-logs-kafka:
 	docker compose -f ../docker-compose.yml logs -f kafka
+
+proto:
+	@uv run python scripts/gen_billing_proto.py
 
 schema:
 	@uv run python scripts/apply_schema.py

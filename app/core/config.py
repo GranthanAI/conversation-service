@@ -4,7 +4,7 @@ Loads application parameters and connection details from environment variables
 using Pydantic Settings class representation.
 """
 
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -118,6 +118,25 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_NODES: str = "localhost:6379"
     REDIS_TIMEOUT_SECONDS: float = 2.0
+
+    # Billing integration (integration plan P6). BILLING_ENFORCEMENT: off = no billing calls at all (today's behaviour);
+    # shadow = call billing and log its decision but always proceed; enforce = billing's decision is binding.
+    # Use 127.0.0.1, not localhost, on Windows (localhost resolves to IPv6 first).
+    BILLING_GRPC_TARGET: str = "127.0.0.1:50061"
+    BILLING_SERVICE_TOKEN: str = ""
+    BILLING_ENFORCEMENT: Literal["off", "shadow", "enforce"] = "off"
+    BILLING_RESERVE_DEADLINE_SECONDS: float = 0.150
+    BILLING_RELEASE_DEADLINE_SECONDS: float = 0.500
+    BILLING_RELEASE_ATTEMPTS: int = 3
+    BILLING_ENTITLEMENTS_DEADLINE_SECONDS: float = 0.300
+    BILLING_BREAKER_FAILURES: int = 5
+    BILLING_BREAKER_RESET_SECONDS: float = 30.0
+    BILLING_DEGRADED_DAILY_LIMIT: int = 10            # messages per user per IST day while billing is unreachable
+    ENTITLEMENTS_CACHE_SECONDS: int = 60
+    ENTITLEMENTS_STALE_SECONDS: int = 3600            # last known value is used this long when billing is down
+    ENTITLEMENTS_TOPIC: str = "entitlements.changed"
+    USER_DELETED_TOPIC: str = "user.deleted"
+    USAGE_THRESHOLD_TOPIC: str = "usage.threshold_reached"
 
     # Kafka settings
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"

@@ -54,6 +54,8 @@ class KafkaConnectionManager:
                     KafkaTopics.TITLE_GENERATED,
                     KafkaTopics.CHAT_RESPONSE_CHUNK,
                     KafkaTopics.CHAT_RESPONSE_GENERATED,
+                    KafkaTopics.ENTITLEMENTS_CHANGED,
+                    KafkaTopics.USER_DELETED,
                     bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
                     group_id=settings.KAFKA_CONSUMER_GROUP,
                     enable_auto_commit=False

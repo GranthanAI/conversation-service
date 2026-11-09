@@ -10,6 +10,12 @@ class KafkaTopics:
     CHAT_MESSAGE_CREATED = "chat.message.created"
     CHAT_RESPONSE_CHUNK = "chat.response.chunk"
     CHAT_RESPONSE_GENERATED = "chat.response.generated"
+    CHAT_RESPONSE_CANCELLED = "chat.response.cancelled"
+
+    # Consumed from other services (billing integration)
+    ENTITLEMENTS_CHANGED = "entitlements.changed"
+    USER_DELETED = "user.deleted"
+    USAGE_THRESHOLD_REACHED = "usage.threshold_reached"
 
     CONVERSATION_CREATED = "conversation.created"
     CONVERSATION_UPDATED = "conversation.updated"
