@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.middleware.correlation import get_correlation_id
 from app.utils.helpers import uuidv7, uuidv7_after
 from app.services.preferences_service import PreferencesService, ResolvedMessagePreferences
+from app.services.model_selection import choose_model
 
 
 class PendingResponseRegistrationError(Exception):
@@ -46,6 +47,8 @@ class MessageService:
         producer_client: Optional[KafkaProducerClient] = None,
         preferences_service: Optional["PreferencesService"] = None,
         branch_context=None,
+        billing_gate=None,
+        plan_limits=None,
     ):
         self.repo = repo
         self.cache = cache_service
@@ -54,6 +57,10 @@ class MessageService:
         self.preferences = preferences_service
         # Optional: resolves what a branch inherits from its ancestors (see BranchContextService).
         self.branch_context = branch_context
+        # Optional: reserve with billing before every send/regenerate (BILLING_ENFORCEMENT off/shadow/enforce).
+        self.billing_gate = billing_gate
+        # Optional: service-owned plan limits (messages per conversation, documents per tree).
+        self.plan_limits = plan_limits
 
     async def _resolve_preferences(
         self, user_id: Optional[UUID], mode: Optional[str], selected_tools: Optional[List[str]]
@@ -87,6 +94,7 @@ class MessageService:
         ancestors: Optional[List[dict]] = None,
         custom_mode: Optional[dict] = None,
         include_diagrams: bool = False,
+        billing: Optional[dict] = None,
     ) -> dict:
         """
         Builds the flat chat.message.created payload matching llm-service's
@@ -110,12 +118,16 @@ class MessageService:
                                        default instead of rejecting the message).
           preferences                  generation preferences (length, tone, language,
                                        personal instructions, citations) at send time.
+
+        Billing (schema_version 2.4, additive): `billing` is the grant block of the integration plan 4.4.1 and is
+        OMITTED when BILLING_ENFORCEMENT=off, so an unbilled payload differs from 2.3 only in schema_version.
+        `defaults_applied.model` is added (true) only when a saved default model was refused and Auto was used.
         """
         now = datetime.now(timezone.utc).isoformat()
         correlation_id = get_correlation_id()
-        return {
+        payload = {
             "event_type": "chat.message.created",
-            "schema_version": "2.3",
+            "schema_version": "2.4",
             "message_id": str(message_id),
             "response_message_id": str(response_message_id) if response_message_id else None,
             "conversation_id": str(conversation_id),
@@ -142,6 +154,9 @@ class MessageService:
             "trace_context": {"traceparent": correlation_id, "tracestate": ""},
             "timestamp": now,
         }
+        if billing is not None:
+            payload["billing"] = billing
+        return payload
 
     async def send(
         self,
@@ -154,6 +169,7 @@ class MessageService:
         selected_tools: Optional[List[str]] = None,
         file_ids: Optional[List[UUID]] = None,
         include_diagrams: bool = False,
+        model: Optional[str] = None,
     ) -> Message:
         """
         Persists a message atomically (message + outbox event in one LOGGED BATCH) and
@@ -169,50 +185,81 @@ class MessageService:
         Cassandra and Redis do not share a transaction, so each step has an explicit
         compensation: if a later step fails, the earlier ones are undone (placeholder
         soft-deleted, marker removed) and the error is raised to the caller.
+
+        Billing order (strict): 1. resolve preferences and model  2. service-owned plan limits (403 plan_limit, no side
+        effects)  3. reserve with billing per BILLING_ENFORCEMENT (a deny raises 429/403/402/503 and nothing is
+        persisted)  4. persist + outbox  5. any failure while persisting releases the reservation, then re-raises.
         """
         response_message_id = uuidv7_after(message_id) if sender == "user" else None
         event_id = uuid.uuid1()
-        # Read BEFORE this turn's rows exist, so the history is strictly what came earlier.
-        history = await self._recent_history(conversation_id) if sender == "user" else []
-        ancestors: List[dict] = []
-        if sender == "user" and self.branch_context is not None:
-            history, ancestors = await self._branch_event_context(conversation_id, history)
-        resolved = await self._resolve_preferences(user_id, mode, selected_tools)
-        payload = self._build_chat_message_created_payload(
-            conversation_id, message_id, user_id, content, resolved.mode, resolved.selected_tools, file_ids,
-            response_message_id=response_message_id,
-            history=history,
-            preferences=resolved.generation,
-            defaults_applied=resolved.defaults_applied,
-            ancestors=ancestors,
-            custom_mode=resolved.custom_mode.model_dump(mode="json") if resolved.custom_mode else None,
-            include_diagrams=include_diagrams,
-        )
-
-        if response_message_id:
-            await self._open_pending_response(conversation_id, response_message_id)
+        resolved = await self._resolve_preferences(user_id, mode, selected_tools)                   # 1
+        grant, defaults_applied = None, resolved.defaults_applied
+        if sender == "user":
+            if self.plan_limits is not None:
+                await self.plan_limits.check_send(user_id, conversation_id, file_ids)               # 2
+            if self.billing_gate is not None:
+                grant, fell_back = await self.billing_gate.reserve(                                  # 3
+                    user_id, message_id, choose_model(model, resolved.default_model))
+                if fell_back:
+                    defaults_applied = {**defaults_applied, "model": True}
 
         try:
-            msg = self.repo.create_with_outbox(
-                conversation_id=conversation_id,
-                message_id=message_id,
-                sender=sender,
-                content=content,
-                status="sent",
-                event_id=event_id,
-                event_type=KafkaTopics.CHAT_MESSAGE_CREATED,
-                outbox_payload=json.dumps(payload),
-                file_ids=file_ids
+            # Read BEFORE this turn's rows exist, so the history is strictly what came earlier.
+            history = await self._recent_history(conversation_id) if sender == "user" else []
+            ancestors: List[dict] = []
+            if sender == "user" and self.branch_context is not None:
+                history, ancestors = await self._branch_event_context(conversation_id, history)
+            payload = self._build_chat_message_created_payload(
+                conversation_id, message_id, user_id, content, resolved.mode, resolved.selected_tools, file_ids,
+                response_message_id=response_message_id,
+                history=history,
+                preferences=resolved.generation,
+                defaults_applied=defaults_applied,
+                ancestors=ancestors,
+                custom_mode=resolved.custom_mode.model_dump(mode="json") if resolved.custom_mode else None,
+                include_diagrams=include_diagrams,
+                billing=grant.event_block() if grant else None,
             )
-        except Exception:
+
+            if sender == "user" and self.plan_limits is not None:
+                await self.plan_limits.record_send(user_id, conversation_id, file_ids)              # 4 (counters)
+
             if response_message_id:
-                await self._discard_pending_response(conversation_id, response_message_id)
+                await self._open_pending_response(conversation_id, response_message_id)
+
+            try:
+                msg = self.repo.create_with_outbox(
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                    sender=sender,
+                    content=content,
+                    status="sent",
+                    event_id=event_id,
+                    event_type=KafkaTopics.CHAT_MESSAGE_CREATED,
+                    outbox_payload=json.dumps(payload),
+                    file_ids=file_ids
+                )
+            except Exception:
+                if response_message_id:
+                    await self._discard_pending_response(conversation_id, response_message_id)
+                raise
+        except BaseException:
+            await self._compensate(user_id, grant)                                                   # 5
             raise
 
         # Invalidate history cache
         await self._invalidate_cache(conversation_id)
         msg.response_message_id = response_message_id
+        msg.billing = grant.response_block() if grant else None
+        msg.defaults_applied = defaults_applied
         return msg
+
+    async def _compensate(self, user_id: Optional[UUID], grant) -> None:
+        """A failure after a successful reserve gives the reservation back (Release reason "send_failed"). Never
+        raises. Only used BEFORE the outbox row is durably written: once it is, the request will be answered and
+        billing settles it from the response event."""
+        if grant is not None and self.billing_gate is not None:
+            await self.billing_gate.release(user_id, grant, "send_failed")
 
     async def _recent_history(self, conversation_id: UUID) -> List[dict]:
         """Recent completed turns for the request event (best effort: a history read failure must never
@@ -363,7 +410,8 @@ class MessageService:
             return True
         return False
 
-    async def regenerate(self, conversation_id: UUID, message_id: UUID, user_id: Optional[UUID] = None) -> Optional[Message]:
+    async def regenerate(self, conversation_id: UUID, message_id: UUID, user_id: Optional[UUID] = None,
+                         model: Optional[str] = None) -> Optional[Message]:
         """
         Regenerates an assistant message.
 
@@ -404,36 +452,50 @@ class MessageService:
         owner_id = user_id or prompt_user_id
         # A regeneration carries no explicit mode/tool choice: the saved defaults apply.
         resolved = await self._resolve_preferences(owner_id, None, None)
-        payload = self._build_chat_message_created_payload(
-            conversation_id, request_id, owner_id, prompt_content,
-            mode=resolved.mode,
-            selected_tools=resolved.selected_tools,
-            preferences=resolved.generation,
-            defaults_applied=resolved.defaults_applied,
-            file_ids=prompt_msg.file_ids if prompt_msg else None,
-            response_message_id=response_message_id,
-            history=self._format_history(older_than_prompt),
-            metadata={
-                "regeneration": True,
-                "prompt_message_id": str(prompt_msg.message_id) if prompt_msg else None,
-                "replaces_message_id": str(message_id),
-            },
-        )
+        # A regenerate is a new message for billing: it reserves under its NEW request id. It adds no user message and
+        # reuses the prompt's documents, so the per-conversation / per-tree limits have nothing to check.
+        grant, defaults_applied = None, resolved.defaults_applied
+        if self.billing_gate is not None:
+            grant, fell_back = await self.billing_gate.reserve(
+                owner_id, request_id, choose_model(model, resolved.default_model))
+            if fell_back:
+                defaults_applied = {**defaults_applied, "model": True}
 
-        await self._open_pending_response(conversation_id, response_message_id)
         try:
-            self.repo.create_with_outbox(
-                conversation_id=conversation_id,
-                message_id=response_message_id,
-                sender="assistant",
-                content="",
-                status="pending",
-                event_id=uuid.uuid1(),
-                event_type=KafkaTopics.CHAT_MESSAGE_CREATED,
-                outbox_payload=json.dumps(payload),
+            payload = self._build_chat_message_created_payload(
+                conversation_id, request_id, owner_id, prompt_content,
+                mode=resolved.mode,
+                selected_tools=resolved.selected_tools,
+                preferences=resolved.generation,
+                defaults_applied=defaults_applied,
+                file_ids=prompt_msg.file_ids if prompt_msg else None,
+                response_message_id=response_message_id,
+                history=self._format_history(older_than_prompt),
+                metadata={
+                    "regeneration": True,
+                    "prompt_message_id": str(prompt_msg.message_id) if prompt_msg else None,
+                    "replaces_message_id": str(message_id),
+                },
+                billing=grant.event_block() if grant else None,
             )
-        except Exception:
-            await self._discard_pending_response(conversation_id, response_message_id)
+
+            await self._open_pending_response(conversation_id, response_message_id)
+            try:
+                self.repo.create_with_outbox(
+                    conversation_id=conversation_id,
+                    message_id=response_message_id,
+                    sender="assistant",
+                    content="",
+                    status="pending",
+                    event_id=uuid.uuid1(),
+                    event_type=KafkaTopics.CHAT_MESSAGE_CREATED,
+                    outbox_payload=json.dumps(payload),
+                )
+            except Exception:
+                await self._discard_pending_response(conversation_id, response_message_id)
+                raise
+        except BaseException:
+            await self._compensate(owner_id, grant)
             raise
 
         if target_msg.sender == "assistant":
@@ -445,6 +507,8 @@ class MessageService:
 
         await self._invalidate_cache(conversation_id)
         target_msg.response_message_id = response_message_id
+        target_msg.billing = grant.response_block() if grant else None
+        target_msg.defaults_applied = defaults_applied
         return target_msg
 
     def _is_writable_assistant_row(self, conversation_id: UUID, message_id: UUID) -> bool:

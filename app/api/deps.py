@@ -23,6 +23,8 @@ from app.repositories.source_edit_repository import SourceEditRepository
 from app.services.cache_service import CacheService
 from app.services.entitlements_service import EntitlementsService, build_entitlements_service
 from app.services.plan_limits import PlanLimitService
+from app.services.billing_gate import BillingGate
+from app.clients.billing_client import billing_client
 from app.services.conversation_service import ConversationService
 from app.services.message_service import MessageService
 from app.services.idempotency_service import IdempotencyService
@@ -130,12 +132,18 @@ def get_notes_repository(session: AsyncSession = Depends(get_db)) -> NotesReposi
 def get_source_edit_repository(session: AsyncSession = Depends(get_db)) -> SourceEditRepository:
     return SourceEditRepository(session)
 
+def get_billing_gate(entitlements: EntitlementsService = Depends(get_entitlements_service)) -> BillingGate:
+    """The reserve step of a send/regenerate (BILLING_ENFORCEMENT off/shadow/enforce)."""
+    return BillingGate(billing_client, redis_client=redis_manager.client, entitlements=entitlements)
+
 def get_message_service(
     repo: CassandraMessageRepository = Depends(get_message_repository),
     cache_service: CacheService = Depends(get_cache_service),
     producer_client: KafkaProducerClient = Depends(get_kafka_producer_client),
     preferences_service: PreferencesService = Depends(get_preferences_service),
     branch_context: BranchContextService = Depends(get_branch_context_service),
+    billing_gate: BillingGate = Depends(get_billing_gate),
+    plan_limits: PlanLimitService = Depends(get_plan_limit_service),
 ) -> MessageService:
     """
     Factory method injecting MessageService with repository and cache DI.
@@ -143,6 +151,7 @@ def get_message_service(
     return MessageService(
         repo=repo, cache_service=cache_service, producer_client=producer_client,
         preferences_service=preferences_service, branch_context=branch_context,
+        billing_gate=billing_gate, plan_limits=plan_limits,
     )
 
 def get_idempotency_service() -> IdempotencyService:

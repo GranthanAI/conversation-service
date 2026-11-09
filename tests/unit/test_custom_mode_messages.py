@@ -74,7 +74,7 @@ async def test_explicit_custom_mode_puts_an_immutable_snapshot_on_the_event():
     service, repo = ms(Modes("direct"))
     await send(service, mode=f"custom:{MODE_ID}")
     payload = event_of(repo)
-    assert payload["schema_version"] == "2.3" and payload["mode_hint"] == "default"
+    assert payload["schema_version"] == "2.4" and payload["mode_hint"] == "default"
     assert payload["custom_mode"] == {"mode_id": str(MODE_ID), "version": 4, "name": "Reviewer",
                                       "execution_style": "direct", "instructions": "Be strict."}
     assert payload["defaults_applied"]["mode"] is False

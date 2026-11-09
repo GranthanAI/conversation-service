@@ -93,6 +93,17 @@ class CitationOut(BaseModel):
     end_seconds: Optional[int] = None
 
 
+class BillingInfo(BaseModel):
+    """What billing granted this send/regenerate (null when BILLING_ENFORCEMENT=off)."""
+    granted_group: Optional[str] = None
+    granted_model: Optional[str] = None
+    downgraded: bool = False
+    remaining_today: Optional[int] = None      # -1 = unlimited
+    funded_by: Optional[str] = None
+    enforcement: Optional[str] = None          # enforce | shadow | degraded
+    notice_key: Optional[str] = None           # "limit.best_switched" when downgraded
+
+
 class MessageResponse(BaseModel):
     """
     Serialized DTO for message entity responses.
@@ -110,6 +121,10 @@ class MessageResponse(BaseModel):
     # Present on POST .../messages and .../regenerate: the assistant message that the
     # reply streams under (SSE `message_id`). Distinct from `message_id`.
     response_message_id: Optional[UUID] = None
+    # Present on POST .../messages and .../regenerate when billing is on.
+    billing: Optional[BillingInfo] = None
+    # Which of mode / tools / model came from saved defaults (model = true when a refused default model became Auto).
+    defaults_applied: Optional[dict] = None
 
     model_config = {"from_attributes": True}
 

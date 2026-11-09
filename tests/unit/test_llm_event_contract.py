@@ -131,7 +131,9 @@ def test_request_payload_satisfies_llm_request_model():
     assert not missing, f"llm-service request model has fields we do not send: {missing}"
     for key, value in llm_request.items():
         assert isinstance(payload[key], type(value)) or payload[key] is None, key
-    assert payload["schema_version"] == llm_request["schema_version"] == "2.3"
+    # 2.4 = 2.3 + the optional billing block (omitted when BILLING_ENFORCEMENT=off). The fixture carries llm-service's
+    # default, which is only a default: llm-service accepts any schema_version string.
+    assert payload["schema_version"] == "2.4" and llm_request["schema_version"] == "2.3"
     assert payload["message_id"] == str(req) and payload["response_message_id"] == str(resp)
     UUID(payload["message_id"]); UUID(payload["response_message_id"])
 

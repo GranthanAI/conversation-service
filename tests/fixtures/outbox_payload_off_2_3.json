@@ -1,0 +1,31 @@
+{
+  "ancestors": [],
+  "content": "hello world",
+  "conversation_id": "00000000-0000-0000-0000-000000000001",
+  "custom_mode": null,
+  "defaults_applied": {
+    "mode": false,
+    "tools": false
+  },
+  "event_type": "chat.message.created",
+  "file_ids": [
+    "00000000-0000-0000-0000-000000000009"
+  ],
+  "history": [],
+  "include_diagrams": true,
+  "message_id": "0194a1b2-0000-7000-8000-000000000001",
+  "metadata": {},
+  "mode_hint": "smart",
+  "preferences": {},
+  "response_message_id": "<resp>",
+  "schema_version": "2.3",
+  "selected_tools": [
+    "web_search"
+  ],
+  "timestamp": "<ts>",
+  "trace_context": {
+    "traceparent": "<corr>",
+    "tracestate": ""
+  },
+  "user_id": "00000000-0000-0000-0000-000000000003"
+}

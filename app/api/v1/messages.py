@@ -22,7 +22,8 @@ from app.models.conversation import Conversation
 from app.schemas.message import (
     CreateMessageRequest,
     MessageResponse,
-    MessageListResponse
+    MessageListResponse,
+    RegenerateRequest,
 )
 from app.utils.helpers import uuidv7
 from app.utils.pagination import encode_cursor, decode_cursor
@@ -70,6 +71,8 @@ async def create_message(
                 status=cached_data["status"],
                 file_ids=[UUID(fid) for fid in cached_data.get("file_ids", [])],
                 response_message_id=UUID(cached_data["response_message_id"]) if cached_data.get("response_message_id") else None,
+                billing=cached_data.get("billing"),
+                defaults_applied=cached_data.get("defaults_applied"),
             )
 
     # Process normally
@@ -85,6 +88,7 @@ async def create_message(
             selected_tools=payload.selected_tools,
             include_diagrams=payload.include_diagrams,
             file_ids=payload.file_ids,
+            model=payload.model,
         )
     except Exception as e:
         if x_idempotency_key:
@@ -114,6 +118,8 @@ async def create_message(
             "status": msg.status.value,
             "file_ids": [str(fid) for fid in msg.file_ids],
             "response_message_id": str(msg.response_message_id) if msg.response_message_id else None,
+            "billing": msg.billing,
+            "defaults_applied": msg.defaults_applied,
         }
         await idempotency_service.save_response(x_idempotency_key, response_data)
 
@@ -152,14 +158,17 @@ async def get_message_history(
 async def regenerate_message(
     conversation_id: UUID,
     message_id: UUID,
+    payload: Optional[RegenerateRequest] = None,
     conv: Conversation = Depends(require_conversation_owner),
     service: MessageService = Depends(get_message_service)
 ):
     """
-    Triggers regeneration of an assistant message (requires ownership).
+    Triggers regeneration of an assistant message (requires ownership). The optional body may carry `model`
+    ("auto" or a catalog model id); without it the saved default_model applies. A regenerate counts as a new message.
     """
     try:
-        msg = await service.regenerate(conversation_id=conversation_id, message_id=message_id, user_id=conv.user_id)
+        msg = await service.regenerate(conversation_id=conversation_id, message_id=message_id, user_id=conv.user_id,
+                                       model=payload.model if payload else None)
     except PendingResponseRegistrationError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

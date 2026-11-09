@@ -34,3 +34,6 @@ class Message:
     # Set on the object returned by send()/regenerate(): the pending assistant message
     # the reply will be written to and streamed under. Not a stored column.
     response_message_id: Optional[UUID] = None
+    # Set on the object returned by send()/regenerate() when billing is on (BILLING_ENFORCEMENT != off). Not stored.
+    billing: Optional[dict] = None
+    defaults_applied: Optional[dict] = None
