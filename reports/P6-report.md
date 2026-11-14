@@ -3,7 +3,7 @@
 - **Commits:** `33d4cd5` P6a · `9a13ca2` P6b · `9f75b8b` P6c · `ecfad4a` P6d · `d4c8380` P6e · P6f (docs and this report; hash is in `git log`). Range: `988df1b..HEAD`. **Pushed:** no (owner pushes).
 - **Contracts touched:** plan 4.1 (service token and `x-correlation-id` metadata), 4.2 (idempotency key = `request_message_id`), 4.4.1 (`billing` block, `chat.message.created` 2.4), 4.4.2 (`model`, `model_group` read from 2.2 events), 4.4.7 (`entitlements.changed`), 4.5 (deadlines, breaker), 4.6 (deny shapes), 4.7 (entitlement cache), 4.8 (service-owned limits). **Deviations:** see the list below.
 - **Tests:** unit and focused integration only (no full suite, by your rule). 24 files run, **all passed** (table below). Integration pieces ran against the shared services with throwaway names, dropped afterwards. **Simulation scenarios:** none run (blocked, see exit check).
-- **Exit check:** part (2) enforce **DONE**; part (1) shadow: **decisions and latency done, billing usage rows NOT DONE** (llm-service was not running). Outputs in the "Exit check" section below.
+- **Exit check:** part (1) shadow **DONE** (second run, below); part (2) enforce **DONE**.
 - **Decisions needed:** none open from your list (1-6 accepted); new: billing's plan ids (see Exit check) and starting llm-service for part (1).
 - **Not done:** see the list below.
 
@@ -60,6 +60,23 @@ Throwaway objects created by tests (Postgres `p6_test_*` databases, Cassandra `p
 - **`user.deleted` data deletion** is out of scope as instructed: the consumer only drops the user's cached entitlements (both keys). Deleting their conversations, messages, preferences, custom modes and counters still needs a separate task.
 - **Un-archiving custom modes:** no such operation exists, so there was nothing to guard.
 - **Postgres/API integration suites** (Testcontainers) and the full suite: not run, per your rules.
+
+## Exit check part (1): DONE (14 Nov 2026, llm-service running the P5 code on 8003)
+
+Setup: llm-service started from its own `.env` (git-ignored) with `BILLING_SERVICE_TOKEN` (the llm value), `BILLING_GRPC_TARGET=127.0.0.1:50061`, `BILLING_SERVICE_URL=http://127.0.0.1:8090`, `KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092`, `BILLING_RESERVE_MANIM=shadow`. conversation-service: its billing settings are now in its own git-ignored `.env` (token = the conversation value) and it was restarted on 8002 from `.env` alone with `BILLING_ENFORCEMENT=shadow`. A throwaway Free user, registered and logged in through the gateway, sent 20 messages through `/api/v1/conversations/{id}/messages`.
+
+```
+20 x 202, each with billing {"enforcement": "shadow", "granted_group": "fast"}
+SELECT count(*), sum(cost_micro_inr) FROM billing.usage_events WHERE source_id IN (<the 20 request_message_ids>);
+   rows | cost_micro_inr | min_cost          ->  20 rows, 501,027 micro-INR in total, every row non-zero (min 6,427)
+18 of them kind=message model=openai/gpt-oss-20b model_group=fast (input 2.5k tokens, output ~18, aux = request analysis)
+stored assistant messages (GET /conversations/{id}/messages):  18 x status "sent", model "openai/gpt-oss-20b", model_group "fast"
+                                                               2 x status "failed" (see below), model null
+```
+
+The 2 failures are Groq's free tier (8,000 tokens per minute for gpt-oss-20b): the circuit breaker opened and the Gemini fallback was also unavailable, so llm-service published `PROVIDER_ALL_FAILED`; their usage rows are the error-status ones (billing released those holds and recorded the cost). I paced the sends at 20 s apart for this run. A first attempt at 1 s spacing failed 18 of 20 for the same reason and its user was deleted. I also noticed a bug in llm-service, not fixed here (out of scope): the request-analysis retry wrapper raises `ProviderRateLimitError.__init__() got an unexpected keyword argument 'status_code'` when Groq answers 429, which hides the real 429 and falls back to the safe default plan.
+
+Afterwards `BILLING_ENFORCEMENT=enforce` was put back in conversation-service's `.env` and it was restarted from `.env` alone (new code including G5: Alembic 0007 `user_deletions` was applied to the shared database first). The G5 path was exercised live: deleting the throwaway users through `DELETE /api/v1/auth/me` wrote `user_deletions` rows within seconds (purge_after = deletion + 30 days).
 
 ## Exit check (second run, 14 Nov 2026)
 
