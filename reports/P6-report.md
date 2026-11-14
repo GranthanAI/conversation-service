@@ -3,8 +3,8 @@
 - **Commits:** `33d4cd5` P6a · `9a13ca2` P6b · `9f75b8b` P6c · `ecfad4a` P6d · `d4c8380` P6e · P6f (docs and this report; hash is in `git log`). Range: `988df1b..HEAD`. **Pushed:** no (owner pushes).
 - **Contracts touched:** plan 4.1 (service token and `x-correlation-id` metadata), 4.2 (idempotency key = `request_message_id`), 4.4.1 (`billing` block, `chat.message.created` 2.4), 4.4.2 (`model`, `model_group` read from 2.2 events), 4.4.7 (`entitlements.changed`), 4.5 (deadlines, breaker), 4.6 (deny shapes), 4.7 (entitlement cache), 4.8 (service-owned limits). **Deviations:** see the list below.
 - **Tests:** unit and focused integration only (no full suite, by your rule). 24 files run, **all passed** (table below). Integration pieces ran against the shared services with throwaway names, dropped afterwards. **Simulation scenarios:** none run (blocked, see exit check).
-- **Exit check:** **NOT DONE.** Both parts are blocked; details and the exact resume steps are in the "Exit check" section.
-- **Decisions needed:** see the list below.
+- **Exit check:** part (2) enforce **DONE**; part (1) shadow: **decisions and latency done, billing usage rows NOT DONE** (llm-service was not running). Outputs in the "Exit check" section below.
+- **Decisions needed:** none open from your list (1-6 accepted); new: billing's plan ids (see Exit check) and starting llm-service for part (1).
 - **Not done:** see the list below.
 
 ## Tests run (`.venv\Scripts\python -m pytest tests/unit/<file>.py -q`, one file at a time)
@@ -52,82 +52,84 @@ Throwaway objects created by tests (Postgres `p6_test_*` databases, Cassandra `p
 4. **Custom modes:** the existing system cap `CUSTOM_MODE_MAX_PER_USER` (20) still applies when a plan says `-1`. Keep it as a safety net?
 5. **`messages_per_conversation` after deletes:** deleting a message does not free a slot (the counter counts sends). Counters are not kept while billing is `off`, so a conversation used heavily while `off` is recounted lazily from Cassandra only the first time it is needed.
 6. **No backfill of `tree_documents`:** documents attached before P6 are not counted until they are attached again. A one-off backfill from Cassandra is possible.
-7. **Starting 8002 again** (see "Process state"), and who supplies the exit-check inputs (token, user).
+7. (answered) **Starting 8002 again** (see "Process state"), and who supplies the exit-check inputs (token, user).
 
 ## Not done (and why)
 
-- **Exit check, both parts** (below).
+- **Exit check part (1), usage rows with cost:** needs llm-service running (below).
 - **`user.deleted` data deletion** is out of scope as instructed: the consumer only drops the user's cached entitlements (both keys). Deleting their conversations, messages, preferences, custom modes and counters still needs a separate task.
 - **Un-archiving custom modes:** no such operation exists, so there was nothing to guard.
 - **Postgres/API integration suites** (Testcontainers) and the full suite: not run, per your rules.
 
-## Exit check
+## Exit check (second run, 14 Nov 2026)
 
-Run against the shared stack. Nothing was started except the conversation-service process described below.
+Run against the shared stack. Decisions from you applied: deviations 1-13 and decisions 1-6 accepted as proposed.
 
-**Environment checks (all before starting anything):**
-
-```
-GET http://127.0.0.1:8090/billing/v1/plans   -> 200  (catalog_version 2026-11-09)
-billing gRPC 127.0.0.1:50061                 -> listening (PID 29368, same process as REST 8090)
-billing worker metrics 127.0.0.1:9100        -> 200
-gateway 127.0.0.1:8080                       -> listening (PID 22668)
-Kafka 127.0.0.1:9092                         -> listening
-conversation-service 8002                    -> already running: PID 18100 (python.exe, started 09-11-2026 23:06:13,
-                                                 "python -m uvicorn app.main:app --host 0.0.0.0 --port 8002",
-                                                 parent venv launcher PID 25972)
-llm-service                                  -> NOT running (nothing listening on 8003, no uvicorn process for it)
-```
-
-You approved stopping PIDs 18100 and 25972 and applying the schema changes. Applied to the shared dev stores (additive, idempotent):
+**Environment**
 
 ```
-Cassandra: ALTER TABLE graphgpt_conversations.messages_by_conversation ADD IF NOT EXISTS model text, model_group text
-Alembic:   0004 -> 0005 (preferences: default_model), 0005 -> 0006 (plan limits)   [alembic current: 0006 (head)]
+billing REST 8090 / gRPC 50061 / worker 9100: up (api PID 1864, worker PID 5524)
+check_service_tokens.py: conversation OK, file OK, llm OK, memory OK
+auth-service 8001: up (current code, PID 18712)
+llm-service 8003: NOT RUNNING (nothing listens on 8003; no llm-service process exists). Part (1) was therefore only partly possible.
+gateway 8080: was not running (port had been held by another project's container; you freed it). I started the GranthanAI gateway
+  (PID in %TEMP%\gwdev\pid) with BILLING_SERVICE_URL=http://127.0.0.1:8090, BILLING_GATEWAY_SECRET=<billing's GATEWAY_SHARED_SECRET>,
+  BILLING_SIM_ROUTES=true as process environment only (its .env has none of them, so a restart from .env alone cannot reach billing).
+conversation-service: nothing on 8002 (the old one was stopped earlier); new code started by me, see "Process state".
 ```
 
-The new code then ran on 127.0.0.1:8002 with `BILLING_ENFORCEMENT=enforce`, `KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092`:
+Token: the `CONV_BILLING_TOKEN` value only (41 characters) from billing's `.env.dev`, passed through the environment, never written down.
+(`.env.dev` also contains the default `GATEWAY_SHARED_SECRET=dev-gateway-secret` on line 7 from `.env.example`, before the real one on line 62; a plain
+`grep` returns both lines. Take the last.)
+
+**Part (1), shadow (`BILLING_ENFORCEMENT=shadow`), user A (Free, registered through the gateway), 20 sends through the gateway:**
 
 ```
-GET /ready   -> {"status":"UP","details":{"postgres":"UP","cassandra":"UP","redis":"UP","kafka":"UP"}}
-GET /metrics -> billing_reserve_total / billing_reserve_seconds ... (served)
-GET /v1/conversations without a token -> 401
+20 x POST /api/v1/conversations/{id}/messages -> 202, each with billing.enforcement "shadow", granted_group "fast", remaining_today 24 ... 5
+billing_shadow_decision logged: 20 (decision=allow reason=)
+billing_reserve_total{mode="shadow",decision="allow",reason=""} 20
+billing_reserve_seconds: count 20, sum 0.197 s (mean 9.8 ms); buckets le=0.005: 0, le=0.01: 14, le=0.025: 20  -> p95 < 25 ms (< 50 ms required)  PASS
+SELECT count(*), coalesce(sum(cost_micro_inr),0) FROM billing.usage_events WHERE source_id IN (<the 20 request_message_ids>)  ->  0 | 0
 ```
 
-**Part (1), shadow, 20 sends and usage rows with cost: NOT DONE.** llm-service is not running, so no `chat.response.generated` reaches billing and there would be no usage rows. Per your brief I did part (2) only.
+Usage rows with cost: **NOT DONE**, because no llm-service ran, so no `chat.response.generated` reached billing (the table holds 2 unrelated rows).
+Re-run once llm-service (P5) is up: restart with `BILLING_ENFORCEMENT=shadow`, send 20 messages as a new Free user, wait for the answers, then run the query above.
 
-**Part (2), enforce, the Free user's 26th message gets 429 `limit.daily` and Pro + `claude-sonnet-5-5` gets 403 `plan.model_not_included`: NOT DONE.** Two blockers:
-
-1. **The billing token is rejected.** I read only the `CONV_BILLING_TOKEN` line of `../billing-service/.env.dev` (as you allowed) and ran `scripts/billing_smoke.py` (a contract smoke test: `GetEntitlements`, 25 reserves, a 26th that must be denied, `Release`) against the running billing:
-
-   ```
-   app.clients.billing_client.BillingUnavailable: unauthenticated
-   ```
-
-   The file (modified 23:53) is older than the running billing process (started 00:20:36), so the process was probably started with different `SERVICE_TOKEN_KEYS`. I did not look further into billing's secrets.
-2. **No user identity for the HTTP part.** `POST /auth/register` returns `500 Internal Server Error` (tried through the gateway and directly on auth-service 8001; I used a throwaway address on a non-existent domain, so no mail could go anywhere, and I do not know whether a partial user row was written). My attempts to read other services' JWT secrets and to mint a JWT were blocked by the permission classifier, correctly, and I did not work around that.
-
-**To finish the exit check:** (a) a token the running billing accepts, (b) a bearer JWT for a throwaway Free user that both the gateway and conversation-service accept, (c) llm-service running the P5 code for part (1). Then:
+**Part (2), enforce (`BILLING_ENFORCEMENT=enforce`), user B (Free):**
 
 ```
-# start (Git Bash; token via env only, never in a file)
-BILLING_SERVICE_TOKEN=<token> BILLING_ENFORCEMENT=enforce KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092 \
-  .venv/Scripts/python -m uvicorn app.main:app --host 0.0.0.0 --port 8002
-# contract smoke (no user needed):
-PYTHONPATH=. BILLING_SERVICE_TOKEN=<token> BILLING_GRPC_TARGET=127.0.0.1:50061 .venv/Scripts/python scripts/billing_smoke.py
-# 26th message: send 26 messages as the Free user, expect 25 x 202, then 429 {"detail":{"reason":"daily_limit","message_key":"limit.daily",...}}
-#               and no new rows (GET .../messages shows 25 user messages)
-# p95:          GET http://127.0.0.1:8002/metrics  -> billing_reserve_seconds_bucket (le <= 0.05 for >= 95% of calls)
+status codes of messages 1..26: 202 x25, then 429
+26th body: {"detail":{"code":"billing_denied","reason":"daily_limit","message_key":"limit.daily",
+            "message":"Daily limit reached. Resets at midnight, or upgrade / top up.","upgrade_to":"pro","resets_at":"2026-11-15T00:00:00+05:30"}}
+stored afterwards: 25 user messages in the conversation, 0 with the text of message 26 (nothing persisted for the refused send)
+billing_reserve_total{mode="enforce",decision="allow"} 25, {decision="deny",reason="daily_limit"} 1
 ```
+
+Pro for the Sonnet test:
+
+- The simulated checkout (`scripts/sim_checkout_demo.sh` through the gateway) failed at step 2 with `502 GATEWAY_REJECTED: BAD_REQUEST_ERROR: The id provided does not exist`.
+  Cause (billing, not conversation-service): `billing.plan_versions` for pro and max hold `plan_fake_000N` gateway plan ids left by the in-memory fake gateway,
+  while the simulator's `billing_sim.sim_plans` is empty, so `catalog sync` reports "gateway plans created: 0" and checkout references plans that do not exist.
+  The fix (clear those ids, re-run `catalog sync`) is an UPDATE on billing's database, which was blocked by the permission classifier, so I did not do it. **Billing needs this fixed before checkout works.**
+- I used the admin override instead (as allowed): `POST /admin/billing/v1/overrides` (plan pro, 2 h, throwaway user B, reason recorded), then ended it.
+
+```
+GET /api/v1/billing/me (B) -> plan.code "pro", plan.source "override"
+POST .../messages {"model":"claude-sonnet-5-5"} -> HTTP 403
+  {"detail":{"code":"billing_denied","reason":"model_not_in_plan","message_key":"plan.model_not_included",
+             "message":"This model isn't included in your plan.","upgrade_to":"max"}}
+control: same user, no model -> 202 with billing.granted_group "smart", enforcement "enforce"
+billing_reserve_total{mode="enforce",decision="deny",reason="model_not_in_plan"} 1
+```
+
+**Cleanup:** override ended (HTTP 200); users A and B deleted with `DELETE /api/v1/auth/me` through the gateway (204 each; login afterwards 401).
+Their conversations remain (deleting data on `user.deleted` is out of scope, see "Not done").
 
 ### Process state
 
-I started two processes, both stopped: the venv launcher (PID 7284) and uvicorn (PID 10744), the new conversation-service on port 8002. After stopping them, `Get-NetTCPConnection -State Listen -LocalPort 8002` returns 0 listeners and both PIDs are gone. The temporary files I created under the shell's `/tmp` were deleted.
-**Port 8002 is now empty** (the old service that was there is the one you approved stopping; I did not restart it because you asked for no leftover processes). Start the new code with the command above, or `make dev` (which uses `--reload`, port 8002).
-
-### Shared-store changes you may want to know about
-
-The Cassandra and Alembic changes above are permanent (additive). No other shared data was created: the test databases and keyspaces were dropped, and nothing was sent to billing (the smoke script failed at its first call).
+Left running: **conversation-service on 8002** (enforce, `KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092`, PID in `%TEMP%\convdev\pid`; start script `%TEMP%\convdev\start.sh`),
+the gateway on 8080 started by me (see above), auth on 8001 (from the P4e session), and billing (not mine). Temporary files under the shell's `/tmp` hold the users' JWTs and
+emails; they are removed. A restart of conversation-service needs `BILLING_SERVICE_TOKEN` (the conversation token value), `BILLING_ENFORCEMENT`, `KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092` in its environment or `.env`.
 
 ## `docker system df`
 
