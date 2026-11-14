@@ -31,6 +31,7 @@ from app.workers.cleanup_worker import start_cleanup_worker
 from app.workers.retry_worker import start_retry_worker
 from app.workers.summary_worker import start_summary_worker
 from app.workers.pending_timeout_worker import start_pending_timeout_worker
+from app.workers.user_purge_worker import start_user_purge_worker
 from app.middleware.correlation import CorrelationIDMiddleware
 from app.artifacts.runtime import build_export_service, get_artifact_service, get_object_store
 from app.artifacts.service import ArtifactWorker
@@ -54,6 +55,7 @@ async def lifespan(app: FastAPI):
     app.state.retry_worker_task = asyncio.create_task(start_retry_worker())
     app.state.summary_worker_task = asyncio.create_task(start_summary_worker())
     app.state.pending_timeout_worker_task = asyncio.create_task(start_pending_timeout_worker())
+    app.state.user_purge_worker_task = asyncio.create_task(start_user_purge_worker())
 
     # Artifact registry + export workers (PostgreSQL state, private object storage). A storage outage at startup is
     # logged, not fatal: the workers retry, and every other endpoint keeps working.
@@ -80,6 +82,7 @@ async def lifespan(app: FastAPI):
     app.state.retry_worker_task.cancel()
     app.state.summary_worker_task.cancel()
     app.state.pending_timeout_worker_task.cancel()
+    app.state.user_purge_worker_task.cancel()
     for task in app.state.artifact_tasks:
         task.cancel()
     try:
@@ -91,6 +94,7 @@ async def lifespan(app: FastAPI):
             app.state.retry_worker_task,
             app.state.summary_worker_task,
             app.state.pending_timeout_worker_task,
+            app.state.user_purge_worker_task,
             return_exceptions=True
         )
     except asyncio.CancelledError:

@@ -133,6 +133,9 @@ class Settings(BaseSettings):
     BILLING_BREAKER_RESET_SECONDS: float = 30.0
     BILLING_DEGRADED_DAILY_LIMIT: int = 10            # messages per user per IST day while billing is unreachable
     ENTITLEMENTS_CACHE_SECONDS: int = 60
+    # user.deleted: routes answer 404 at once; the user's data is purged this many days later.
+    USER_DATA_RETENTION_DAYS: int = 30
+    USER_PURGE_INTERVAL_SECONDS: int = 3600
     ENTITLEMENTS_STALE_SECONDS: int = 3600            # last known value is used this long when billing is down
     ENTITLEMENTS_TOPIC: str = "entitlements.changed"
     USER_DELETED_TOPIC: str = "user.deleted"

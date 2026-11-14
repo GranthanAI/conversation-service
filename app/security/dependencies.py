@@ -8,6 +8,10 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db
 from app.security.models import CurrentUser
 from app.security.jwt import verify_jwt_token
 from app.models.conversation import Conversation
@@ -16,9 +20,14 @@ from app.services.conversation_service import ConversationService
 
 oauth2_scheme = HTTPBearer(auto_error=False)
 
+async def user_is_deleted(db: AsyncSession, user_id: UUID) -> bool:
+    return (await db.execute(text("SELECT 1 FROM user_deletions WHERE user_id = :u"), {"u": user_id})).first() is not None
+
+
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
-    token: Optional[str] = Query(None)
+    token: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
 ) -> CurrentUser:
     """
     FastAPI dependency reading the Bearer JWT token, verifying claims, and returning a strongly typed CurrentUser.
@@ -36,7 +45,11 @@ async def get_current_user(
             detail="Not authenticated"
         )
     payload = verify_jwt_token(resolved_token)
-    return CurrentUser.from_jwt_payload(payload)
+    user = CurrentUser.from_jwt_payload(payload)
+    # user.deleted: the account is gone, so every route answers 404 for it (data is purged after the retention period).
+    if await user_is_deleted(db, user.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return user
 
 async def require_conversation_owner(
     conversation_id: UUID,

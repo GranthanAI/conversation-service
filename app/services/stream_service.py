@@ -38,6 +38,16 @@ class StreamService:
             logger.warning("Failed to publish user notice", user_id=str(user_id), error=str(e))
             return 0
 
+    async def close_user_streams(self, user_id: UUID) -> int:
+        """Ends every stream the user has open (user.deleted). Returns how many were subscribed."""
+        if not self.redis:
+            return 0
+        try:
+            return int(await self.redis.publish(self._get_user_channel(user_id), json.dumps({"sse_event": "close"})))
+        except Exception as e:
+            logger.warning("Failed to publish stream close", user_id=str(user_id), error=str(e))
+            return 0
+
     def _get_ownership_key(self, conversation_id: UUID) -> str:
         return f"stream:{conversation_id}"
 
@@ -242,6 +252,9 @@ class StreamService:
 
                         # Parse data to ensure correctness
                         data = json.loads(data_str)
+
+                        if data.get("sse_event") == "close":       # user.deleted: end this stream
+                            return
 
                         if data.get("sse_event") == "notice":      # user-level, not tied to any turn
                             yield self.format_notice(data.get("data") or {})

@@ -78,6 +78,17 @@ class UserPreferenceRecord(Base):
     )
 
 
+class UserDeletion(Base):
+    """user.deleted: the user's routes answer 404 at once; their data is purged after `purge_after` (USER_DATA_RETENTION_DAYS)."""
+
+    __tablename__ = "user_deletions"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    purge_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    purged_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ConversationMessageCounter(Base):
     """USER messages sent in a conversation's own turns (not inherited branch history); regenerate adds nothing.
     Created lazily from one Cassandra count the first time a limit needs it, then incremented in the send transaction."""

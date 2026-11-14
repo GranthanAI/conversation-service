@@ -81,7 +81,9 @@ async def test_get_current_user_dependency():
     token = make_test_jwt({"sub": str(user_id), "email": "test@example.com"})
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     
-    user = await get_current_user(credentials=creds)
+    db = MagicMock()                                   # no user_deletions row: the account is not deleted
+    db.execute = AsyncMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+    user = await get_current_user(credentials=creds, token=None, db=db)
     assert isinstance(user, CurrentUser)
     assert user.id == user_id
     assert user.email == "test@example.com"

@@ -12,6 +12,7 @@ from uuid import UUID
 from app.db.kafka import kafka_manager
 from app.events.topics import KafkaTopics
 from app.core.logging import logger
+from app.core.config import settings
 
 from app.repositories.inbox_repository import CassandraInboxRepository
 from app.repositories.conversation_repository import CassandraConversationRepository
@@ -137,6 +138,22 @@ async def start_kafka_consumer():
         logger.error("Fatal error in background Kafka consumer loop", error=str(e))
 
 
+async def record_user_deleted(user_id: UUID, session_factory=None) -> None:
+    """Idempotent: a replay (or a second user.deleted event) keeps the FIRST deleted_at and purge_after."""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy.dialects.postgresql import insert
+    from app.db.session import get_session_factory
+    from app.models.sql_models import UserDeletion
+
+    now = datetime.now(timezone.utc)
+    async with (session_factory or get_session_factory())() as db:
+        await db.execute(insert(UserDeletion).values(
+            user_id=user_id, deleted_at=now, purge_after=now + timedelta(days=settings.USER_DATA_RETENTION_DAYS)
+        ).on_conflict_do_nothing(index_elements=["user_id"]))
+        await db.commit()
+    logger.info("user_deleted_scheduled", user_id=str(user_id))
+
+
 async def _handle_entitlements_event(topic: str, event: dict, inbox_repo, entitlements) -> None:
     """entitlements.changed (billing) and user.deleted (auth): drop the user's cached entitlements (both the 60 s key
     and the 1 h stale key), deduplicated through the inbox on event_id. Deleting the user's conversations on
@@ -151,6 +168,10 @@ async def _handle_entitlements_event(topic: str, event: dict, inbox_repo, entitl
         logger.info("Duplicate entitlement event skipped via inbox dedup.", event_id=str(event_id), topic=topic)
         return
     await entitlements.invalidate(user_id)
+    if topic == KafkaTopics.USER_DELETED:
+        await record_user_deleted(user_id)              # before the inbox mark: a failure here is retried, not lost
+        from app.db.redis import redis_manager as _r
+        await StreamService(redis_client=_r.client).close_user_streams(user_id)
     inbox_repo.save(event_id)
     logger.info("entitlements_invalidated", topic=topic, user_id=str(user_id))
 
