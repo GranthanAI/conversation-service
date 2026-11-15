@@ -33,6 +33,20 @@ SNAPSHOT = json.loads((pathlib.Path(__file__).parent.parent / "fixtures" / "outb
 CONV, MSG, USER = uuid.UUID(int=1), uuid.UUID("0194a1b2-0000-7000-8000-000000000001"), uuid.UUID(int=3)
 
 
+@pytest.fixture(autouse=True)
+def _model_groups_from_the_fixture(monkeypatch):
+    """The gate reads model groups from billing; tests never call it: serve the catalog snapshot instead."""
+    from app.services.model_groups import model_groups
+    catalog = json.loads((pathlib.Path(__file__).parent.parent / "fixtures" / "billing_models_catalog.json").read_text())["models"]
+
+    async def fetch(url):
+        return catalog
+
+    monkeypatch.setattr(model_groups, "_fetch", fetch)
+    monkeypatch.setattr(model_groups, "_local", None)
+    monkeypatch.setattr(model_groups, "redis", None)
+
+
 class FakeRedis:
     def __init__(self):
         self.store, self.ttl, self.sets = {}, {}, {}
@@ -604,3 +618,14 @@ async def test_event_block_matches_llm_service_grant_model(monkeypatch, mode, re
     assert set(block) | {"allowed_models"} >= set(mod.BillingGrant.model_fields) >= set(block)   # field for field
     parsed = mod.BillingGrant.model_validate(block)                   # and every value is valid for it
     assert parsed.enforcement == block["enforcement"]
+
+
+async def test_explicit_unavailable_model_is_a_409_with_billings_message_and_nothing_persisted(monkeypatch):
+    r = ReserveResult(allowed=False, deny_reason="model_not_in_plan", message_key="model.unavailable")
+    h = Harness("enforce", FakeClient(r), monkeypatch=monkeypatch)
+    with pytest.raises(BillingDeniedError) as e:
+        await h.send(model="claude-haiku-5-5")
+    assert e.value.status_code == 409
+    assert e.value.detail["message_key"] == "model.unavailable" and e.value.detail["model"] == "claude-haiku-5-5"
+    assert e.value.detail["message"] == "Claude Haiku 5.5 isn't available right now. Please pick another model."
+    assert not h.persisted

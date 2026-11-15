@@ -47,6 +47,9 @@ async def lifespan(app: FastAPI):
     cassandra_manager.initialize()
     redis_manager.initialize()
     await kafka_manager.initialize()
+    from app.services.model_groups import model_groups
+    model_groups.redis = redis_manager.client
+    await model_groups.start()   # model -> group from billing; never blocks startup if billing is down
 
     # Spawn background consumer and outbox tasks
     app.state.kafka_consumer_task = asyncio.create_task(start_kafka_consumer())
@@ -100,6 +103,8 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
+    from app.services.model_groups import model_groups as _mg
+    await _mg.stop()
     from app.clients.billing_client import billing_client
     await billing_client.close()
     cassandra_manager.close()

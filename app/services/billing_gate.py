@@ -17,7 +17,8 @@ from app.clients.billing_client import BillingClient, BillingUnavailable, Reserv
 from app.core.billing_messages import BEST_SWITCHED_KEY, IST, BillingDeniedError
 from app.core.config import settings
 from app.core.logging import logger
-from app.core.plan_defaults import FAST_MODELS, FREE_LIMITS, MODEL_GROUPS
+from app.core.plan_defaults import FAST_MODELS, FREE_LIMITS
+from app.services.model_groups import model_groups
 from app.services.model_selection import ModelChoice, reserve_with_default_fallback
 from app.telemetry import metrics
 
@@ -89,7 +90,10 @@ class BillingGate:
             return await self._degraded(uid, choice, e.reason)
         if not result.allowed:
             metrics.billing_reserve_total.inc(mode="enforce", decision="deny", reason=result.deny_reason)
-            raise BillingDeniedError(result.deny_reason, upgrade_to=await self._upgrade_to(uid, result.deny_reason))
+            model = final.requested_model
+            raise BillingDeniedError(result.deny_reason, upgrade_to=await self._upgrade_to(uid, result.deny_reason),
+                                     message_key=result.message_key, model=model,
+                                     model_label=await model_groups.label_of(model) if model else None)
         metrics.billing_reserve_total.inc(mode="enforce", decision="allow", reason="")
         grant = _grant(result, final, "enforce")
         grant.allowed_models = await self._allowed_in_group(uid, grant)
@@ -120,7 +124,8 @@ class BillingGate:
             return None
         if not ent.allowed_models:
             return None
-        return [m for m in ent.allowed_models if MODEL_GROUPS.get(m) == grant.granted_group]
+        groups = await model_groups.index()
+        return [m for m in ent.allowed_models if groups.get(m, {}).get("group") == grant.granted_group]
 
     async def _degraded(self, uid: str, choice: ModelChoice, why: str):
         """Billing could not answer: Auto or Fast only, at most DEGRADED_DAILY_LIMIT per user per IST day."""

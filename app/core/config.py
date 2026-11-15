@@ -124,6 +124,7 @@ class Settings(BaseSettings):
     # Use 127.0.0.1, not localhost, on Windows (localhost resolves to IPv6 first).
     BILLING_GRPC_TARGET: str = "127.0.0.1:50061"
     BILLING_SERVICE_TOKEN: str = ""
+    BILLING_SERVICE_URL: str = "http://127.0.0.1:8090"   # billing REST, for the model catalog (GET /billing/v1/models)
     BILLING_ENFORCEMENT: Literal["off", "shadow", "enforce"] = "off"
     BILLING_RESERVE_DEADLINE_SECONDS: float = 0.150
     BILLING_RELEASE_DEADLINE_SECONDS: float = 0.500

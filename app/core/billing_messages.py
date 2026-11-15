@@ -36,6 +36,13 @@ BILLING_DENIALS: dict[str, tuple[int, str, str]] = {
 # A deny reason this service does not know (billing added one): a 429 with generic copy, never a 500 or a wrong 403.
 UNKNOWN_DENIAL = (429, "limit.unknown", "We can't send this message right now. Please try again in a moment.")
 
+MODEL_UNAVAILABLE_KEY = "model.unavailable"
+
+
+def model_unavailable_message(model: str) -> str:
+    return f"{model} isn't available right now. Please pick another model."
+
+
 BEST_SWITCHED_KEY = "limit.best_switched"
 BEST_SWITCHED_MESSAGE = "Today's Advanced answers are used, so this one comes from a Smart model. Advanced refreshes at 12:00 am."
 
@@ -93,10 +100,21 @@ class PlanLimitError(HTTPException):
 class BillingDeniedError(HTTPException):
     """Billing refused the send (429 / 403 / 402) or is unavailable (503). Nothing was persisted."""
 
-    def __init__(self, reason: str, upgrade_to: Optional[str] = None, now: Optional[datetime] = None):
+    def __init__(self, reason: str, upgrade_to: Optional[str] = None, now: Optional[datetime] = None,
+                 message_key: str = "", model: Optional[str] = None, model_label: Optional[str] = None):
         http_status, key, message = BILLING_DENIALS.get(reason, UNKNOWN_DENIAL)
+        extra = {}
+        if message_key == MODEL_UNAVAILABLE_KEY:
+            # billing refused an explicit model that cannot answer: a conflict with the request (409), not a rate
+            # limit, and nothing was reserved. upgrade_to stays null: a bigger plan does not help.
+            http_status, key = 409, MODEL_UNAVAILABLE_KEY
+            message = model_unavailable_message(model_label or model or "This model")
+            upgrade_to = None
+            if model:
+                extra["model"] = model
         detail = {"code": "billing_denied", "reason": reason, "message_key": key, "message": message,
                   "upgrade_to": upgrade_to}
+        detail.update(extra)
         if reason == "daily_limit":
             detail["resets_at"] = next_ist_midnight(now)
         elif reason == "monthly_limit":
