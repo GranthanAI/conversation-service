@@ -25,9 +25,13 @@ BILLING_DENIALS: dict[str, tuple[int, str, str]] = {
     "member_spend_cap": (402, "credits.member_cap",
                          "Your organisation's monthly limit for you has been reached. "
                          "Ask your organisation admin to raise it."),
+    "rate_limit": (429, "limit.per_minute", "You're sending messages too quickly. Please wait a moment."),
     "billing_unavailable": (503, "billing.degraded",
                             "Only Fast models are available for a few minutes. Please try again shortly."),
 }
+
+# A deny reason this service does not know (billing added one): a 429 with generic copy, never a 500 or a wrong 403.
+UNKNOWN_DENIAL = (429, "limit.unknown", "We can't send this message right now. Please try again in a moment.")
 
 BEST_SWITCHED_KEY = "limit.best_switched"
 BEST_SWITCHED_MESSAGE = "You've used today's Best-model messages, so this answer uses a Smart model."
@@ -42,8 +46,20 @@ PLAN_LIMIT_WHAT: dict[str, str] = {
 }
 
 
+CONVERSATION_FULL_MESSAGE = (
+    "This conversation is full. Branch from any message to continue; your context comes with you."
+)
+
+
 def plan_limit_message(limit: str) -> str:
+    if limit == "messages_per_conversation":
+        return CONVERSATION_FULL_MESSAGE
     return f"{PLAN_LIMIT_WHAT.get(limit, limit)} limit for your plan reached. Upgrade to add more."
+
+
+def next_ist_minute(now: Optional[datetime] = None) -> str:
+    now = (now or datetime.now(IST)).astimezone(IST)
+    return (now.replace(second=0, microsecond=0) + timedelta(minutes=1)).isoformat()
 
 
 def next_ist_midnight(now: Optional[datetime] = None) -> str:
@@ -72,13 +88,14 @@ class BillingDeniedError(HTTPException):
     """Billing refused the send (429 / 403 / 402) or is unavailable (503). Nothing was persisted."""
 
     def __init__(self, reason: str, upgrade_to: Optional[str] = None, now: Optional[datetime] = None):
-        http_status, key, message = BILLING_DENIALS.get(
-            reason, (status.HTTP_403_FORBIDDEN, "account.blocked", BILLING_DENIALS["account_blocked"][2]))
+        http_status, key, message = BILLING_DENIALS.get(reason, UNKNOWN_DENIAL)
         detail = {"code": "billing_denied", "reason": reason, "message_key": key, "message": message,
                   "upgrade_to": upgrade_to}
         if reason == "daily_limit":
             detail["resets_at"] = next_ist_midnight(now)
         elif reason == "monthly_limit":
             detail["resets_at"] = next_ist_month_start(now)
+        elif reason == "rate_limit":
+            detail["resets_at"] = next_ist_minute(now)
         self.reason = reason
         super().__init__(status_code=http_status, detail=detail)

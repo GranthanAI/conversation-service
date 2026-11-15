@@ -80,6 +80,27 @@ async def test_deny_is_mapped(env):
     assert not r.allowed and r.deny_reason == "daily_limit" and r.message_key == "limit.daily" and r.hold_id is None
 
 
+async def test_rate_limit_and_an_unknown_deny_reason_are_mapped(env):
+    from app.clients.billing_grpc import billing_pb2 as pb
+    fake, client, *_ = env
+    fake.reserve_handler = lambda req: pb.CheckAndReserveResponse(
+        allowed=False, deny_reason=pb.DENY_REASON_RATE_LIMIT, message_key="limit.per_minute")
+    r = await client.check_and_reserve("u", "k")
+    assert not r.allowed and r.deny_reason == "rate_limit" and r.message_key == "limit.per_minute"
+    fake.reserve_handler = lambda req: pb.CheckAndReserveResponse(allowed=False, deny_reason=99)  # a value this build lacks
+    r = await client.check_and_reserve("u", "k2")
+    assert not r.allowed and r.deny_reason == "unknown"
+
+
+async def test_max_context_tokens_zero_is_passed_on_unchanged(env):
+    from app.clients.billing_grpc import billing_pb2 as pb
+    fake, client, *_ = env
+    fake.reserve_handler = lambda req: pb.CheckAndReserveResponse(allowed=True, hold_id="h", max_context_tokens=0)
+    assert (await client.check_and_reserve("u", "k")).max_context_tokens == 0
+    fake.reserve_handler = lambda req: pb.CheckAndReserveResponse(allowed=True, hold_id="h2", max_context_tokens=64000)
+    assert (await client.check_and_reserve("u", "k2")).max_context_tokens == 64000
+
+
 async def test_breaker_opens_after_5_failures_then_half_open_probe(env):
     fake, client, clock, _ = env
     fake.fail_code = grpc.StatusCode.UNAVAILABLE

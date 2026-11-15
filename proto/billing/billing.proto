@@ -1,5 +1,5 @@
 // VENDORED COPY. Source: billing-service/proto/granthan/billing/v1/billing.proto
-// billing-service commit: 50fb61c9e9f096af142a35b17c66f4fa40754164
+// billing-service commit: 8957e1ba06aaaf73a3728984397f23aa49126f77
 // Re-vendor when billing bumps the proto (additive changes only), then run: make proto
 syntax = "proto3";
 package granthan.billing.v1;
@@ -37,6 +37,7 @@ enum DenyReason {
   DENY_REASON_SPEND_CAP = 5;
   DENY_REASON_ACCOUNT_BLOCKED = 6;
   DENY_REASON_MEMBER_SPEND_CAP = 7;  // an organisation's per-member monthly limit
+  DENY_REASON_RATE_LIMIT = 8;        // more than MAX_MESSAGES_PER_MINUTE messages in a minute (added later: old callers see an unknown value)
 }
 
 message CheckAndReserveRequest {

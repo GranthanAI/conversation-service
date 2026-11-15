@@ -36,6 +36,7 @@ DENY_REASONS = {
     pb.DENY_REASON_SPEND_CAP: "spend_cap",
     pb.DENY_REASON_ACCOUNT_BLOCKED: "account_blocked",
     pb.DENY_REASON_MEMBER_SPEND_CAP: "member_spend_cap",
+    pb.DENY_REASON_RATE_LIMIT: "rate_limit",
 }
 GROUP_NAMES = {pb.MODEL_GROUP_FAST: "fast", pb.MODEL_GROUP_SMART: "smart", pb.MODEL_GROUP_BEST: "best",
                pb.MODEL_GROUP_ULTRA: "ultra"}
@@ -193,7 +194,7 @@ class BillingClient:
             deny_reason=DENY_REASONS.get(r.deny_reason, "" if r.allowed else "unknown"),
             message_key=r.message_key, hold_id=r.hold_id or None,
             granted_group=GROUP_NAMES.get(r.granted_group), granted_model=r.granted_model or None,
-            downgraded=r.downgraded, max_context_tokens=r.max_context_tokens or None,
+            downgraded=r.downgraded, max_context_tokens=r.max_context_tokens,  # 0 = no cap from billing: passed on unchanged
             remaining_today=r.remaining_today, funded_by=r.funded_by or None,
             hold_expires_at_unix=r.hold_expires_at_unix)
 
