@@ -27,6 +27,17 @@ PLAN_ORDER: tuple[str, ...] = ("free", "pro", "max")
 FAST_MODELS: frozenset[str] = frozenset({"openai/gpt-oss-20b", "gemini-2.5-flash-lite"})
 
 
+# Which group each offered model is in (billing-service config/plans.yaml model_groups). The billing block's
+# `allowed_models` is the plan's models INSIDE the granted group, and GetEntitlements lists every group together.
+MODEL_GROUPS: dict[str, str] = {
+    "openai/gpt-oss-20b": "fast", "gemini-2.5-flash-lite": "fast",
+    "openai/gpt-oss-120b": "smart", "claude-haiku-5-5": "smart", "gpt-6-luna": "smart",
+    "gemini-3.1-flash-lite": "smart", "gemini-2.5-flash": "smart",
+    "claude-sonnet-5-5": "best", "gpt-6.1-sol": "best",
+    "claude-opus-5-5": "ultra",
+}
+
+
 def next_plan(plan_code: str) -> str | None:
     """The plan to suggest in an 'Upgrade to ...' message, or None on the top plan / non-individual plans."""
     try:

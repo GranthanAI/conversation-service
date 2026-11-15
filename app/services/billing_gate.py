@@ -17,7 +17,7 @@ from app.clients.billing_client import BillingClient, BillingUnavailable, Reserv
 from app.core.billing_messages import BEST_SWITCHED_KEY, IST, BillingDeniedError
 from app.core.config import settings
 from app.core.logging import logger
-from app.core.plan_defaults import FAST_MODELS, FREE_LIMITS
+from app.core.plan_defaults import FAST_MODELS, FREE_LIMITS, MODEL_GROUPS
 from app.services.model_selection import ModelChoice, reserve_with_default_fallback
 from app.telemetry import metrics
 
@@ -37,12 +37,16 @@ class BillingGrant:
     downgraded: bool = False
     remaining_today: Optional[int] = None
     degraded_key: Optional[str] = None            # set when this message was counted in the degraded daily counter
+    allowed_models: Optional[list] = None         # the plan's models inside granted_group (None = not sent)
 
     def event_block(self) -> dict:
         """The `billing` block of chat.message.created 2.4 (llm-service app/models/billing.py, field for field)."""
-        return {"hold_id": self.hold_id, "requested_model": self.requested_model, "granted_group": self.granted_group,
-                "granted_model": self.granted_model, "max_context_tokens": self.max_context_tokens,
-                "funded_by": self.funded_by, "downgraded": self.downgraded, "enforcement": self.enforcement}
+        block = {"hold_id": self.hold_id, "requested_model": self.requested_model, "granted_group": self.granted_group,
+                 "granted_model": self.granted_model, "max_context_tokens": self.max_context_tokens,
+                 "funded_by": self.funded_by, "downgraded": self.downgraded, "enforcement": self.enforcement}
+        if self.allowed_models is not None:           # additive and optional (2.4): omitted when unknown
+            block["allowed_models"] = list(self.allowed_models)
+        return block
 
     def response_block(self) -> dict:
         """MessageResponse.billing."""
@@ -87,7 +91,9 @@ class BillingGate:
             metrics.billing_reserve_total.inc(mode="enforce", decision="deny", reason=result.deny_reason)
             raise BillingDeniedError(result.deny_reason, upgrade_to=await self._upgrade_to(uid, result.deny_reason))
         metrics.billing_reserve_total.inc(mode="enforce", decision="allow", reason="")
-        return _grant(result, final, "enforce"), fell_back
+        grant = _grant(result, final, "enforce")
+        grant.allowed_models = await self._allowed_in_group(uid, grant)
+        return grant, fell_back
 
     async def _shadow(self, call, choice: ModelChoice) -> BillingGrant:
         try:
@@ -101,6 +107,20 @@ class BillingGate:
         if result is not None and result.allowed:
             return _grant(result, choice, "shadow")
         return BillingGrant(enforcement="shadow", requested_model=choice.requested_model)   # hold_id/granted_group null
+
+    async def _allowed_in_group(self, uid: str, grant: BillingGrant) -> Optional[list]:
+        """The plan's models inside the granted group, from the cached GetEntitlements. None (field omitted) when
+        unknown: no entitlements service or an empty list (the Free fallback), no granted group, or credits paid the
+        message (the plan does not govern what credits can buy)."""
+        if self.entitlements is None or not grant.granted_group or grant.funded_by == "credits":
+            return None
+        try:
+            ent = await self.entitlements.get(uid)
+        except Exception:
+            return None
+        if not ent.allowed_models:
+            return None
+        return [m for m in ent.allowed_models if MODEL_GROUPS.get(m) == grant.granted_group]
 
     async def _degraded(self, uid: str, choice: ModelChoice, why: str):
         """Billing could not answer: Auto or Fast only, at most DEGRADED_DAILY_LIMIT per user per IST day."""

@@ -245,6 +245,53 @@ async def test_enforce_allow_block_response_and_metrics(monkeypatch):
     assert metrics.billing_reserve_total.get(mode="enforce", decision="allow", reason="") == before + 1
 
 
+FREE_ALLOWED = ["openai/gpt-oss-20b", "gemini-2.5-flash-lite", "openai/gpt-oss-120b", "claude-haiku-5-5", "gpt-6-luna"]
+PRO_ALLOWED = FREE_ALLOWED + ["gemini-3.1-flash-lite", "gemini-2.5-flash", "claude-sonnet-5-5", "gpt-6.1-sol"]
+
+
+def with_entitlements(h, allowed, plan="free"):
+    from app.clients.billing_client import EntitlementsData
+    h.gate.entitlements = MagicMock()
+    h.gate.entitlements.get = AsyncMock(return_value=EntitlementsData(user_id="u", plan_code=plan, allowed_models=allowed))
+
+
+async def test_block_carries_the_plans_models_inside_the_granted_group(monkeypatch):
+    h = Harness("enforce", FakeClient(allow("smart", granted_model="claude-haiku-5-5")), monkeypatch=monkeypatch)
+    with_entitlements(h, FREE_ALLOWED)
+    await h.send(model="claude-haiku-5-5")
+    assert h.payloads[0]["billing"]["allowed_models"] == ["openai/gpt-oss-120b", "claude-haiku-5-5", "gpt-6-luna"]
+
+
+async def test_downgraded_advanced_request_lists_only_the_smart_models_of_the_plan(monkeypatch):
+    r = allow("smart", granted_model="openai/gpt-oss-120b")
+    r.downgraded = True
+    h = Harness("enforce", FakeClient(r), monkeypatch=monkeypatch)
+    with_entitlements(h, PRO_ALLOWED, "pro")
+    await h.send(model="claude-sonnet-5-5")
+    block = h.payloads[0]["billing"]
+    assert block["allowed_models"] == ["openai/gpt-oss-120b", "claude-haiku-5-5", "gpt-6-luna",
+                                       "gemini-3.1-flash-lite", "gemini-2.5-flash"]
+    assert "claude-sonnet-5-5" not in block["allowed_models"]
+
+
+@pytest.mark.parametrize("entitled", [None, []])
+async def test_block_omits_allowed_models_when_unknown(monkeypatch, entitled):
+    h = Harness("enforce", FakeClient(allow("smart")), monkeypatch=monkeypatch)
+    if entitled is not None:
+        with_entitlements(h, entitled)
+    await h.send()
+    assert "allowed_models" not in h.payloads[0]["billing"]
+
+
+async def test_block_omits_allowed_models_when_credits_pay(monkeypatch):
+    r = allow("ultra", granted_model="claude-opus-5-5")
+    r.funded_by = "credits"
+    h = Harness("enforce", FakeClient(r), monkeypatch=monkeypatch)
+    with_entitlements(h, FREE_ALLOWED)
+    await h.send(model="claude-opus-5-5")
+    assert "allowed_models" not in h.payloads[0]["billing"]
+
+
 async def test_downgraded_response_carries_the_notice_key(monkeypatch):
     r = allow("smart", hold_id="h")
     r.downgraded = True
@@ -553,6 +600,7 @@ async def test_event_block_matches_llm_service_grant_model(monkeypatch, mode, re
     h = Harness(mode, client, monkeypatch=monkeypatch)
     await h.send()
     block = h.payloads[0]["billing"]
-    assert set(block) == set(mod.BillingGrant.model_fields)           # field for field
+    # additive field `allowed_models` is omitted when billing is off or the plan's models are unknown
+    assert set(block) | {"allowed_models"} >= set(mod.BillingGrant.model_fields) >= set(block)   # field for field
     parsed = mod.BillingGrant.model_validate(block)                   # and every value is valid for it
     assert parsed.enforcement == block["enforcement"]
