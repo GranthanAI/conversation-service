@@ -226,7 +226,7 @@ async def test_enforce_daily_limit_body_matches_plan_4_6(monkeypatch):
     with pytest.raises(BillingDeniedError) as e:
         await h.send()
     assert e.value.detail["upgrade_to"] == "max"
-    assert e.value.detail["message"] == "Daily limit reached. Resets at midnight, or upgrade / top up."
+    assert e.value.detail["message"] == "Today's messages are all used. They refresh at 12:00 am."
     assert e.value.detail["resets_at"].endswith("+05:30")
 
 

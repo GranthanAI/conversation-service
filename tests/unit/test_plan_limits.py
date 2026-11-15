@@ -90,11 +90,11 @@ async def send(sf, ent, repo, convs, user, cid, files=None):
 def assert_plan_limit(exc: PlanLimitError, limit: str, upgrade_to):
     assert exc.status_code == 403
     assert exc.detail == {"code": "billing_denied", "reason": "plan_limit", "limit": limit,
-                          "message_key": f"limit.{limit}", "message": plan_limit_message(limit), "upgrade_to": upgrade_to}
+                          "message_key": f"limit.{limit}", "message": plan_limit_message(limit, upgrade_to is not None), "upgrade_to": upgrade_to}
 
 
 def test_message_copy():
-    assert plan_limit_message("branches_per_tree") == "Branch limit for your plan reached. Upgrade to add more."
+    assert plan_limit_message("branches_per_tree") == "This tree has all the branches it includes. Start a new tree, or see plans for more."
 
 
 # ---- messages_per_conversation -------------------------------------------------------------------------------
