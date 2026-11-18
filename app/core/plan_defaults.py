@@ -24,15 +24,20 @@ FREE_LIMITS: dict[str, int] = {
 PLAN_ORDER: tuple[str, ...] = ("free", "pro", "max")
 
 # Fast models of the Free plan, used to decide which models are allowed while billing is unreachable.
-FAST_MODELS: frozenset[str] = frozenset({"openai/gpt-oss-20b", "gemini-2.5-flash-lite"})
+FAST_MODELS: frozenset[str] = frozenset({"openai/gpt-oss-20b", "gemini-3.1-flash-lite"})
+
+# Every model the Free plan includes (billing-service config/plans.yaml: the Fast group plus these extras). Degraded mode (billing
+# unreachable) serves exactly these, never Advanced or Ultra.
+FREE_EXTRA_MODELS: frozenset[str] = frozenset({"openai/gpt-oss-120b", "claude-haiku-5-5", "gpt-6-luna"})
+FREE_MODELS: frozenset[str] = FAST_MODELS | FREE_EXTRA_MODELS
 
 
 # Which group each offered model is in (billing-service config/plans.yaml model_groups). The billing block's
 # `allowed_models` is the plan's models INSIDE the granted group, and GetEntitlements lists every group together.
 MODEL_GROUPS: dict[str, str] = {
-    "openai/gpt-oss-20b": "fast", "gemini-2.5-flash-lite": "fast",
+    "openai/gpt-oss-20b": "fast", "gemini-3.1-flash-lite": "fast",
     "openai/gpt-oss-120b": "smart", "claude-haiku-5-5": "smart", "gpt-6-luna": "smart",
-    "gemini-3.1-flash-lite": "smart", "gemini-2.5-flash": "smart",
+    "gemini-3.5-flash-lite": "smart", "gemini-2.5-flash": "smart",
     "claude-sonnet-5-5": "best", "gpt-6.1-sol": "best",
     "claude-opus-5-5": "ultra",
 }

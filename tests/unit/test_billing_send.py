@@ -259,8 +259,8 @@ async def test_enforce_allow_block_response_and_metrics(monkeypatch):
     assert metrics.billing_reserve_total.get(mode="enforce", decision="allow", reason="") == before + 1
 
 
-FREE_ALLOWED = ["openai/gpt-oss-20b", "gemini-2.5-flash-lite", "openai/gpt-oss-120b", "claude-haiku-5-5", "gpt-6-luna"]
-PRO_ALLOWED = FREE_ALLOWED + ["gemini-3.1-flash-lite", "gemini-2.5-flash", "claude-sonnet-5-5", "gpt-6.1-sol"]
+FREE_ALLOWED = ["openai/gpt-oss-20b", "gemini-3.1-flash-lite", "openai/gpt-oss-120b", "claude-haiku-5-5", "gpt-6-luna"]
+PRO_ALLOWED = FREE_ALLOWED + ["gemini-3.5-flash-lite", "gemini-2.5-flash", "claude-sonnet-5-5", "gpt-6.1-sol"]
 
 
 def with_entitlements(h, allowed, plan="free"):
@@ -284,7 +284,7 @@ async def test_downgraded_advanced_request_lists_only_the_smart_models_of_the_pl
     await h.send(model="claude-sonnet-5-5")
     block = h.payloads[0]["billing"]
     assert block["allowed_models"] == ["openai/gpt-oss-120b", "claude-haiku-5-5", "gpt-6-luna",
-                                       "gemini-3.1-flash-lite", "gemini-2.5-flash"]
+                                       "gemini-3.5-flash-lite", "gemini-2.5-flash"]
     assert "claude-sonnet-5-5" not in block["allowed_models"]
 
 
@@ -431,9 +431,9 @@ async def test_degraded_allows_ten_then_refuses_the_eleventh(monkeypatch):
     assert h.client.releases == []                                         # degraded messages hold nothing
 
 
-async def test_degraded_refuses_best_and_other_non_fast_models(monkeypatch):
+async def test_degraded_refuses_advanced_ultra_and_models_the_free_plan_lacks(monkeypatch):
     h = Harness("enforce", degraded_client("deadline_exceeded"), monkeypatch=monkeypatch)
-    for model in ("claude-sonnet-5-5", "openai/gpt-oss-120b", "gpt-6-luna"):
+    for model in ("claude-sonnet-5-5", "gpt-6.1-sol", "claude-opus-5-5", "gemini-2.5-flash", "no-such-model"):
         with pytest.raises(BillingDeniedError) as e:
             await h.send(model=model)
         assert e.value.status_code == 503
@@ -629,3 +629,25 @@ async def test_explicit_unavailable_model_is_a_409_with_billings_message_and_not
     assert e.value.detail["message_key"] == "model.unavailable" and e.value.detail["model"] == "claude-haiku-5-5"
     assert e.value.detail["message"] == "Claude Haiku 5.5 isn't available right now. Please pick another model."
     assert not h.persisted
+
+
+async def test_degraded_serves_the_free_lineup_with_the_catalog_group_and_the_free_models_in_it(monkeypatch):
+    h = Harness("enforce", degraded_client(), monkeypatch=monkeypatch)
+    await h.send(model="openai/gpt-oss-120b")
+    b = h.payloads[0]["billing"]
+    assert b["enforcement"] == "degraded" and b["hold_id"] is None
+    assert b["granted_group"] == "smart" and b["granted_model"] == "openai/gpt-oss-120b"
+    assert b["allowed_models"] == ["claude-haiku-5-5", "gpt-6-luna", "openai/gpt-oss-120b"]   # the Free models of that group
+    h2 = Harness("enforce", degraded_client(), monkeypatch=monkeypatch)
+    await h2.send(model="gemini-3.1-flash-lite")
+    b2 = h2.payloads[0]["billing"]
+    assert b2["granted_group"] == "fast" and b2["allowed_models"] == ["gemini-3.1-flash-lite", "openai/gpt-oss-20b"]
+
+
+async def test_degraded_gpt_oss_120b_still_counts_against_the_ten_a_day(monkeypatch):
+    h = Harness("enforce", degraded_client(), monkeypatch=monkeypatch)
+    for _ in range(10):
+        await h.send(model="openai/gpt-oss-120b")
+    with pytest.raises(BillingDeniedError) as e:
+        await h.send(model="openai/gpt-oss-120b")
+    assert e.value.status_code == 503

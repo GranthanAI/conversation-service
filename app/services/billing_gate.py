@@ -17,7 +17,7 @@ from app.clients.billing_client import BillingClient, BillingUnavailable, Reserv
 from app.core.billing_messages import BEST_SWITCHED_KEY, IST, BillingDeniedError
 from app.core.config import settings
 from app.core.logging import logger
-from app.core.plan_defaults import FAST_MODELS, FREE_LIMITS
+from app.core.plan_defaults import FAST_MODELS, FREE_LIMITS, FREE_MODELS
 from app.services.model_groups import model_groups
 from app.services.model_selection import ModelChoice, reserve_with_default_fallback
 from app.telemetry import metrics
@@ -128,11 +128,12 @@ class BillingGate:
         return [m for m in ent.allowed_models if groups.get(m, {}).get("group") == grant.granted_group]
 
     async def _degraded(self, uid: str, choice: ModelChoice, why: str):
-        """Billing could not answer: Auto or Fast only, at most DEGRADED_DAILY_LIMIT per user per IST day."""
+        """Billing could not answer: Auto, or a model of the bundled Free plan (Fast + its extras), at most
+        DEGRADED_DAILY_LIMIT per user per IST day. Advanced, Ultra and anything else is refused (503)."""
         model = choice.requested_model
         fell_back = False
-        if model is not None and model not in FAST_MODELS:
-            if not choice.from_default:                     # an explicit non-Fast choice is never served here
+        if model is not None and model not in FREE_MODELS:
+            if not choice.from_default:                     # an explicit non-Free choice is never served here
                 return self._degraded_refusal(uid, why, "model")
             model, fell_back = None, True                   # a saved default is not an explicit choice: use Auto
         counter = await self._degraded_count(uid)
@@ -143,8 +144,11 @@ class BillingGate:
         metrics.billing_degraded_messages_total.inc()
         metrics.billing_reserve_total.inc(mode="enforce", decision="degraded", reason=why)
         logger.warning("billing_degraded_allow", reason=why, used_today=counter[0])
+        groups = await model_groups.index()
+        group = groups.get(model, {}).get("group", "fast") if model else "fast"   # a Free extra keeps its catalog group
+        in_group = sorted(m for m in FREE_MODELS if groups.get(m, {}).get("group") == group)
         grant = BillingGrant(enforcement="degraded", requested_model=model if not fell_back else None,
-                             hold_id=None, granted_group="fast", granted_model=model,
+                             hold_id=None, granted_group=group, granted_model=model, allowed_models=in_group,
                              max_context_tokens=FREE_LIMITS["context_tokens"], funded_by="plan",
                              remaining_today=settings.BILLING_DEGRADED_DAILY_LIMIT - counter[0], degraded_key=counter[1])
         return grant, fell_back
