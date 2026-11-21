@@ -260,7 +260,7 @@ async def test_enforce_allow_block_response_and_metrics(monkeypatch):
 
 
 FREE_ALLOWED = ["openai/gpt-oss-20b", "gemini-3.1-flash-lite", "openai/gpt-oss-120b", "claude-haiku-5-5", "gpt-6-luna"]
-PRO_ALLOWED = FREE_ALLOWED + ["gemini-3.5-flash-lite", "gemini-2.5-flash", "claude-sonnet-5-5", "gpt-6.1-sol"]
+PRO_ALLOWED = FREE_ALLOWED + ["gemini-3.5-flash-lite", "gemini-3.8-flash", "claude-sonnet-5-5", "gpt-6.1-sol"]
 
 
 def with_entitlements(h, allowed, plan="free"):
@@ -284,7 +284,7 @@ async def test_downgraded_advanced_request_lists_only_the_smart_models_of_the_pl
     await h.send(model="claude-sonnet-5-5")
     block = h.payloads[0]["billing"]
     assert block["allowed_models"] == ["openai/gpt-oss-120b", "claude-haiku-5-5", "gpt-6-luna",
-                                       "gemini-3.5-flash-lite", "gemini-2.5-flash"]
+                                       "gemini-3.5-flash-lite", "gemini-3.8-flash"]
     assert "claude-sonnet-5-5" not in block["allowed_models"]
 
 
@@ -433,7 +433,7 @@ async def test_degraded_allows_ten_then_refuses_the_eleventh(monkeypatch):
 
 async def test_degraded_refuses_advanced_ultra_and_models_the_free_plan_lacks(monkeypatch):
     h = Harness("enforce", degraded_client("deadline_exceeded"), monkeypatch=monkeypatch)
-    for model in ("claude-sonnet-5-5", "gpt-6.1-sol", "claude-opus-5-5", "gemini-2.5-flash", "no-such-model"):
+    for model in ("claude-sonnet-5-5", "gpt-6.1-sol", "claude-opus-5-5", "gemini-3.8-flash", "no-such-model"):
         with pytest.raises(BillingDeniedError) as e:
             await h.send(model=model)
         assert e.value.status_code == 503
@@ -651,3 +651,23 @@ async def test_degraded_gpt_oss_120b_still_counts_against_the_ten_a_day(monkeypa
     with pytest.raises(BillingDeniedError) as e:
         await h.send(model="openai/gpt-oss-120b")
     assert e.value.status_code == 503
+
+
+async def test_every_reserve_logs_the_requested_and_granted_model(monkeypatch):
+    from app.services import billing_gate as bg
+    from app.services.model_selection import ModelChoice
+
+    seen = []
+    monkeypatch.setattr(bg.logger, "info", lambda event, **kw: seen.append((event, kw)))
+    gate = bg.BillingGate(client=None)
+
+    async def fake(self, uid, key, choice):
+        return bg.BillingGrant(enforcement="enforce", requested_model=choice.requested_model, granted_model="openai/gpt-oss-120b",
+                               granted_group="smart"), False
+
+    monkeypatch.setattr(bg.BillingGate, "_reserve", fake)
+    await gate.reserve("u", "m1", ModelChoice("openai/gpt-oss-120b", False))
+    await gate.reserve("u", "m2", ModelChoice(None, True))
+    logs = [kw for ev, kw in seen if ev == "model_selection"]
+    assert logs[0]["requested_model"] == "openai/gpt-oss-120b" and logs[0]["granted_model"] == "openai/gpt-oss-120b"
+    assert logs[1]["requested_model"] == "auto" and logs[1]["from_plan_default"] is True

@@ -70,6 +70,15 @@ class BillingGate:
         self.entitlements = entitlements
 
     async def reserve(self, user_id, request_message_id, choice: ModelChoice):
+        """Reserves (see _reserve) and logs which model the request named and which billing granted, on every send and regenerate."""
+        grant, fell_back = await self._reserve(user_id, request_message_id, choice)
+        logger.info("model_selection", message_id=str(request_message_id), requested_model=choice.requested_model or "auto",
+                    from_plan_default=choice.from_default, granted_model=getattr(grant, "granted_model", None),
+                    granted_group=getattr(grant, "granted_group", None), enforcement=getattr(grant, "enforcement", None),
+                    fell_back_to_auto=fell_back)
+        return grant, fell_back
+
+    async def _reserve(self, user_id, request_message_id, choice: ModelChoice):
         """Returns (grant or None, fell_back). `fell_back` = the saved default model was refused with
         model_not_in_plan and the send went ahead as Auto (-> defaults_applied.model = true).
         Raises BillingDeniedError in enforce mode when billing refuses or degraded mode cannot serve the message."""

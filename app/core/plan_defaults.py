@@ -37,7 +37,7 @@ FREE_MODELS: frozenset[str] = FAST_MODELS | FREE_EXTRA_MODELS
 MODEL_GROUPS: dict[str, str] = {
     "openai/gpt-oss-20b": "fast", "gemini-3.1-flash-lite": "fast",
     "openai/gpt-oss-120b": "smart", "claude-haiku-5-5": "smart", "gpt-6-luna": "smart",
-    "gemini-3.5-flash-lite": "smart", "gemini-2.5-flash": "smart",
+    "gemini-3.5-flash-lite": "smart", "gemini-3.8-flash": "smart",
     "claude-sonnet-5-5": "best", "gpt-6.1-sol": "best",
     "claude-opus-5-5": "ultra",
 }
