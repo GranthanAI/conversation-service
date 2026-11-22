@@ -90,6 +90,11 @@ async def start_kafka_consumer():
                     await consumer.commit()
                     continue
 
+                if msg.topic == KafkaTopics.CHAT_RESPONSE_SUGGESTIONS:
+                    await _handle_chat_response_suggestions(event, inbox_repo, msg_service)
+                    await consumer.commit()
+                    continue
+
                 if msg.topic == KafkaTopics.USAGE_THRESHOLD_REACHED:
                     await _handle_usage_threshold(event, inbox_repo, stream_service)
                     await consumer.commit()
@@ -192,6 +197,25 @@ async def _handle_chat_response_cancelled(event: dict, inbox_repo, msg_service) 
     await msg_service.record_answering_model(
         UUID(conversation_id_str), response_id, event.get("model"), event.get("model_group"))
     inbox_repo.save(dedup_id)
+
+
+async def _handle_chat_response_suggestions(event: dict, inbox_repo, msg_service) -> None:
+    """chat.response.suggestions 1.0 (llm-service): 2-3 follow-up questions for a finished answer. Stored on the assistant
+    row only when that row exists, belongs to `conversation_id` and has status sent; a late, duplicate or malformed event is
+    a no-op. Deduplicated on event_id."""
+    try:
+        event_id = UUID(str(event.get("event_id")))
+        conversation_id = UUID(str(event.get("conversation_id")))
+        response_id = UUID(str(event.get("response_message_id")))
+    except ValueError:
+        logger.warning("chat.response.suggestions without valid ids. Ignoring.")
+        return
+    if inbox_repo.exists(event_id):
+        logger.info("Duplicate chat.response.suggestions skipped via inbox dedup.", event_id=str(event_id))
+        return
+    stored = await msg_service.store_suggestions(conversation_id, response_id, event.get("suggestions"))
+    inbox_repo.save(event_id)
+    logger.info("chat_response_suggestions", stored=stored, message_id=str(response_id))
 
 
 async def _handle_usage_threshold(event: dict, inbox_repo, stream_service) -> None:
@@ -360,11 +384,21 @@ async def _handle_chat_response_generated(
         # Persisted with the message (the durable record); the SSE event below is only live delivery.
         citations = sanitize_citations(event.get("citations"))
         extra = {k: v for k, v in (("model", model), ("model_group", model_group)) if v}    # 2.1 events carry neither
+        # 2.3: the answer call actually used provider reasoning. If the request asked for it (and the plan allowed it) but
+        # the answering model could not, the UI shows think.not_applied ("answered without thinking longer").
+        think = bool(event.get("think"))
+        think_not_applied = False
+        if not think:
+            try:
+                think_not_applied = bool(await msg_service.requested_think(response_id))
+            except Exception:       # a marker that cannot be read only costs the notice
+                think_not_applied = False
         if citations:
             written = await msg_service.finalize_assistant_message(
-                conversation_id, response_id, full_content, citations=citations, **extra)
+                conversation_id, response_id, full_content, citations=citations, think=think, **extra)
         else:
-            written = await msg_service.finalize_assistant_message(conversation_id, response_id, full_content, **extra)
+            written = await msg_service.finalize_assistant_message(
+                conversation_id, response_id, full_content, think=think, **extra)
         if written is None:
             logger.error("chat.response.generated refused: response_message_id belongs to a non-assistant message.",
                          message_id=str(response_id), conversation_id=conversation_id_str)
@@ -383,6 +417,8 @@ async def _handle_chat_response_generated(
             "full_content": full_content,
             # Which catalog model answered (llm-service 2.2). Absent for older events.
             **extra,
+            "think": think,
+            **({"notice_key": "think.not_applied"} if think_not_applied else {}),
         })
         if request_done_id is not None:
             inbox_repo.save(request_done_id)

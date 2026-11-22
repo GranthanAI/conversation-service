@@ -175,7 +175,7 @@ async def test_send_puts_resolved_defaults_and_generation_preferences_on_the_eve
     ms, repo = _message_service(svc)
     await ms.send(uuid.uuid4(), uuid.uuid4(), "user", "hello", user_id=U1)
     payload = json.loads(repo.create_with_outbox.call_args.kwargs["outbox_payload"])
-    assert payload["schema_version"] == "2.4" and payload["custom_mode"] is None
+    assert payload["schema_version"] == "2.5" and payload["custom_mode"] is None
     assert payload["mode_hint"] == "code" and payload["defaults_applied"] == {"mode": True, "tools": False}
     p = payload["preferences"]
     assert (p["answer_length"], p["language"], p["language_name"], p["citations"]) == ("concise", "hi", "Hindi", "hide")

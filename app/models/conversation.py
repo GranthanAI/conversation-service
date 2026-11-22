@@ -32,3 +32,8 @@ class Conversation:
     parent_conversation_id: Optional[UUID] = None
     # Last message of the parent that was in scope when this branch was created (inclusive).
     branch_message_id: Optional[UUID] = None
+    # Temporary chat: not in conversations_by_user (never listed), deleted by the expiry worker at expires_at.
+    temporary: bool = False
+    expires_at: Optional[datetime] = None
+    # Set when this conversation was created by editing a message of another conversation.
+    edited_from_message_id: Optional[UUID] = None

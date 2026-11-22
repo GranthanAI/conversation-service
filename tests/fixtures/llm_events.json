@@ -130,6 +130,7 @@
     "language": "hi",
     "language_name": "Hindi",
     "personal_instructions": "Prefer Python examples",
-    "citations": "hide"
+    "citations": "hide",
+    "suggest_followups": true
   }
 }

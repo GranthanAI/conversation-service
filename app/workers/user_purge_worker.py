@@ -39,6 +39,9 @@ async def purge_user(factory: async_sessionmaker[AsyncSession], conversations, o
     """Raises on any failure (the caller leaves the user due and tries again next sweep)."""
     convs = _all_conversations(conversations, user_id)
     ids = [c.conversation_id for c in convs]
+    from app.services.temporary_service import temporary_ids_of_user
+    temporary = await temporary_ids_of_user(factory, user_id)   # not in conversations_by_user, so listed from our table
+    ids += [t for t in temporary if t not in ids]
 
     async with factory() as db:
         if ids:                                        # counters and documents are keyed by conversation / tree root id
@@ -46,12 +49,23 @@ async def purge_user(factory: async_sessionmaker[AsyncSession], conversations, o
             await db.execute(text("DELETE FROM tree_documents WHERE root_id = ANY(:ids)"), {"ids": ids})
         await db.commit()
 
-    for conv in convs:                                 # the existing delete path: soft delete + conversation.deleted event
-        await conversations.delete(conv.conversation_id)
+    for conv_id in [c.conversation_id for c in convs] + temporary:   # the existing delete path: soft delete + event
+        await conversations.delete(conv_id)
 
     async with factory() as db:
         await db.execute(text("DELETE FROM conversation_notes WHERE owner_id = :u"), {"u": user_id})
         await db.execute(text("DELETE FROM source_edits WHERE owner_id = :u"), {"u": user_id})
+        await db.commit()
+
+    # quick wins: shares (snapshots first, so a failed delete keeps the row and the next sweep resumes), feedback, edits,
+    # temporary chats and the think counters
+    async with factory() as db:
+        share_keys = [k for (k,) in (await db.execute(text("SELECT object_key FROM shared_links WHERE user_id = :u"), {"u": user_id}))]
+    for key in share_keys:
+        await object_store.delete(key)
+    async with factory() as db:
+        for table in ("shared_links", "message_feedback", "message_edits", "temporary_conversations", "think_usage_daily"):
+            await db.execute(text(f"DELETE FROM {table} WHERE user_id = :u"), {"u": user_id})
         await db.commit()
 
     for table, columns in (("export_jobs", ("object_key",)), ("artifacts", ("object_key", "thumbnail_key"))):

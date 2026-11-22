@@ -97,3 +97,13 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     updated_at timestamp,
     PRIMARY KEY (user_id)
 );
+
+-- Quick wins (edit a message, temporary chat, follow-ups, think longer). Additive and idempotent like the model lines
+-- above; run `make schema` BEFORE deploying the conversation-service version that SELECTs these columns.
+-- temporary conversations are written to `conversations` only (never to conversations_by_user), so they are not listed.
+ALTER TABLE conversations ADD IF NOT EXISTS temporary boolean;
+ALTER TABLE conversations ADD IF NOT EXISTS expires_at timestamp;
+ALTER TABLE conversations ADD IF NOT EXISTS edited_from_message_id uuid;
+-- suggestions: JSON list of 2-3 follow-up questions; think: the answer used provider reasoning.
+ALTER TABLE messages_by_conversation ADD IF NOT EXISTS suggestions text;
+ALTER TABLE messages_by_conversation ADD IF NOT EXISTS think boolean;

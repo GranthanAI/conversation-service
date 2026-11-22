@@ -15,6 +15,7 @@ class CreateConversationRequest(BaseModel):
     title: str = Field(..., description="Initial title for conversation catalog", min_length=1, max_length=255)
     parent_conversation_id: Optional[UUID] = Field(None, description="Optional parent conversation UUID from which this conversation was branched")
     branch_message_id: Optional[UUID] = Field(None, description="Message of the parent at which to branch (inclusive). Defaults to the parent's latest message. Requires parent_conversation_id.")
+    temporary: bool = Field(False, description="A temporary chat: not listed, not remembered, deleted after 24 hours. Cannot have a parent.")
 
     @field_validator("title")
     def validate_title(cls, v: str) -> str:
@@ -48,6 +49,9 @@ class ConversationResponse(BaseModel):
     status: str
     parent_conversation_id: Optional[UUID] = None
     branch_message_id: Optional[UUID] = None
+    temporary: bool = False
+    expires_at: Optional[datetime] = None
+    edited_from_message_id: Optional[UUID] = None
 
     model_config = {"from_attributes": True}
 

@@ -67,6 +67,15 @@ async def start_cleanup_worker():
                 
                 # 3. Hard delete conversation metadata
                 conv_repo.hard_delete(conversation_id)
+
+                # 4. A deleted conversation stops being shared: revoke its links and delete the snapshots
+                try:
+                    from app.artifacts.runtime import get_object_store
+                    from app.db.session import get_session_factory
+                    from app.services.share_service import revoke_for_conversation
+                    await revoke_for_conversation(get_session_factory(), get_object_store(), conversation_id)
+                except Exception as e:
+                    logger.warning("Cleanup Worker could not revoke shares", conversation_id=str(conversation_id), error=str(e))
                 
                 logger.info("Successfully hard purged conversation data from databases and cache", conversation_id=str(conversation_id))
                 

@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
-    ARRAY, BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text,
+    ARRAY, BigInteger, Boolean, Date, LargeBinary, SmallInteger, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -63,6 +63,7 @@ class UserPreferenceRecord(Base):
     personal_instructions: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     citations: Mapped[str] = mapped_column(String(16), nullable=False, server_default="show")
     document_context: Mapped[str] = mapped_column(String(24), nullable=False, server_default="conversation")
+    suggest_followups: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -111,3 +112,88 @@ class TreeDocument(Base):
     root_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     document_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class MessageFeedback(Base):
+    """A user's thumbs up/down on one assistant message (one row per user and message)."""
+
+    __tablename__ = "message_feedback"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    message_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    rating: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    model_group: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("rating IN (-1, 1)", name="ck_message_feedback_rating"),
+        Index("ix_message_feedback_rating_created", "rating", "created_at"),
+    )
+
+
+class MessageEdit(Base):
+    """A branch created by editing a message: which message was edited and where the edited version went."""
+
+    __tablename__ = "message_edits"
+
+    branch_conversation_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    original_message_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    original_conversation_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (Index("ix_message_edits_original_message", "original_message_id"),)
+
+
+class SharedLink(Base):
+    """A public read-only snapshot. Only sha256(token) is stored; the token is shown once at creation."""
+
+    __tablename__ = "shared_links"
+
+    share_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    token_hash: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, unique=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    object_key: Mapped[str] = mapped_column(Text, nullable=False)
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    refreshed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    view_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+
+    __table_args__ = (Index("ix_shared_links_user_created", "user_id", "created_at"),)
+
+
+class TemporaryConversation(Base):
+    """Bookkeeping for temporary chats (not in conversations_by_user, so the expiry worker lists them here)."""
+
+    __tablename__ = "temporary_conversations"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_temporary_conversations_due", "expires_at", postgresql_where=text("deleted_at IS NULL")),
+        Index("ix_temporary_conversations_user", "user_id"),
+    )
+
+
+class ThinkUsageDaily(Base):
+    """Think-longer answers a user has started per IST day (the daily plan limit)."""
+
+    __tablename__ = "think_usage_daily"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    day: Mapped[datetime] = mapped_column(Date, primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (CheckConstraint("count >= 0", name="ck_think_usage_daily_nonneg"),)

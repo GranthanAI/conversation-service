@@ -51,6 +51,9 @@ class CacheService:
                     status=ConversationStatus(cached_data["status"]),
                     parent_conversation_id=UUID(cached_data["parent_conversation_id"]) if cached_data.get("parent_conversation_id") else None,
                     branch_message_id=UUID(cached_data["branch_message_id"]) if cached_data.get("branch_message_id") else None,
+                    temporary=cached_data.get("temporary") == "1",
+                    expires_at=datetime.fromisoformat(cached_data["expires_at"]) if cached_data.get("expires_at") else None,
+                    edited_from_message_id=UUID(cached_data["edited_from_message_id"]) if cached_data.get("edited_from_message_id") else None,
                 )
         except Exception as e:
             logger.warning("Failed to read conversation from Redis cache", error=str(e))
@@ -73,6 +76,9 @@ class CacheService:
                 "status": conv.status.value,
                 "parent_conversation_id": str(conv.parent_conversation_id) if conv.parent_conversation_id else "",
                 "branch_message_id": str(conv.branch_message_id) if conv.branch_message_id else "",
+                "temporary": "1" if conv.temporary else "0",
+                "expires_at": conv.expires_at.isoformat() if conv.expires_at else "",
+                "edited_from_message_id": str(conv.edited_from_message_id) if conv.edited_from_message_id else "",
             }
             await self.redis.hset(cache_key, mapping=mapping)
             await self.redis.expire(cache_key, settings.CACHE_TTL_SECONDS)
@@ -117,6 +123,7 @@ class CacheService:
                         file_ids=[UUID(fid) for fid in data.get("file_ids", [])],
                         citations=sanitize_citations(data.get("citations")),
                         model=data.get("model"), model_group=data.get("model_group"),
+                        suggestions=list(data.get("suggestions") or []), think=bool(data.get("think")),
                     ))
                 return messages
         except Exception as e:
@@ -143,6 +150,7 @@ class CacheService:
                     "file_ids": [str(fid) for fid in m.file_ids],
                     "citations": m.citations,
                     "model": m.model, "model_group": m.model_group,
+                    "suggestions": m.suggestions, "think": m.think,
                 }))
             # Cap list length implicitly or overwrite
             await self.redis.delete(cache_key)

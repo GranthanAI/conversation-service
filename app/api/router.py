@@ -14,6 +14,8 @@ from app.api.v1.artifacts import router as artifacts_router
 from app.api.v1.notes import router as notes_router
 from app.api.v1.source_edits import router as source_edits_router
 from app.api.v1.exports import router as exports_router
+from app.api.v1.feedback import router as feedback_router, admin_router as feedback_admin_router
+from app.api.v1.shares import router as shares_router
 
 api_router = APIRouter()
 
@@ -28,3 +30,6 @@ api_router.include_router(artifacts_router, prefix="/artifacts", tags=["Artifact
 api_router.include_router(exports_router, prefix="/exports", tags=["Exports"])
 api_router.include_router(notes_router, prefix="/conversations", tags=["Notes"])
 api_router.include_router(source_edits_router, prefix="/conversations", tags=["Source edits"])
+api_router.include_router(feedback_router, prefix="/conversations", tags=["Feedback"])
+api_router.include_router(feedback_admin_router, prefix="/feedback", tags=["Feedback (staff)"])
+api_router.include_router(shares_router, prefix="/shares", tags=["Shares"])

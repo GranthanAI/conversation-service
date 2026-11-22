@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.custom_modes import ModeStatus, custom_ref, normalize_name
 from app.models.sql_models import CustomModeRecord, UserPreferenceRecord
 
-_PREF_FIELDS = ("default_model", "answer_length", "tone", "language", "personal_instructions", "citations", "document_context")
+_PREF_FIELDS = ("default_model", "answer_length", "tone", "language", "personal_instructions", "citations", "document_context", "suggest_followups")
 
 
 class PreferencesConflictError(Exception):

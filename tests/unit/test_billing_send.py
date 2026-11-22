@@ -172,7 +172,9 @@ async def test_off_payload_is_the_old_payload_apart_from_schema_version(monkeypa
     msg = await h.send(message_id=MSG, mode="smart", selected_tools=["web_search"],
                        file_ids=[uuid.UUID(int=9)], include_diagrams=True)
     payload = _normalise(h.payloads[0])
-    assert payload.pop("schema_version") == "2.4"
+    assert payload.pop("schema_version") == "2.5"
+    # 2.5 adds three flags with their defaults: think, temporary and preferences.suggest_followups
+    assert (payload.pop("think"), payload.pop("temporary")) == (False, False)
     expected = dict(SNAPSHOT)                       # produced by the pre-P6 code (commit 988df1b), schema_version 2.3
     assert expected.pop("schema_version") == "2.3"
     assert payload == expected
@@ -248,7 +250,7 @@ async def test_enforce_allow_block_response_and_metrics(monkeypatch):
     before = metrics.billing_reserve_total.get(mode="enforce", decision="allow", reason="")
     h = Harness("enforce", FakeClient(allow("smart", granted_model="gpt-6-luna", hold_id="h-9", max_context_tokens=64000)), monkeypatch=monkeypatch)
     msg = await h.send(model="gpt-6-luna")
-    assert h.payloads[0]["schema_version"] == "2.4"
+    assert h.payloads[0]["schema_version"] == "2.5"
     assert h.payloads[0]["billing"] == {
         "hold_id": "h-9", "requested_model": "gpt-6-luna", "granted_group": "smart", "granted_model": "gpt-6-luna",
         "max_context_tokens": 64000, "funded_by": "plan", "downgraded": False, "enforcement": "enforce"}

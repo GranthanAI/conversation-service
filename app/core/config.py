@@ -205,6 +205,17 @@ class Settings(BaseSettings):
 
     # Pending Response Timeout settings (llm-service Kafka round-trip watchdog)
     PENDING_RESPONSE_TIMEOUT_SECONDS: int = 120
+    # A "think longer" answer may reason before it streams, so it gets a longer deadline.
+    PENDING_RESPONSE_TIMEOUT_THINK_SECONDS: int = 300
+    # Temporary chats are deleted this long after creation; the sweep runs every TEMPORARY_EXPIRY_INTERVAL_SECONDS.
+    TEMPORARY_CHAT_TTL_HOURS: float = 24.0
+    TEMPORARY_EXPIRY_WORKER_ENABLED: bool = True
+    TEMPORARY_EXPIRY_INTERVAL_SECONDS: float = 600.0
+    # Shares (public read-only snapshots)
+    SHARE_MAX_ACTIVE_PER_USER: int = 50
+    SHARE_PUBLIC_RATE_LIMIT_PER_MINUTE: int = 60
+    SHARE_PUBLIC_CACHE_SECONDS: int = 60
+    FEEDBACK_ADMIN_ROLES: str = "support,admin"
     # The Redis marker must outlive the deadline, otherwise the timeout worker
     # finds the key already expired and mistakes it for "response arrived".
     PENDING_RESPONSE_MARKER_GRACE_SECONDS: int = 300

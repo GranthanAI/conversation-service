@@ -13,9 +13,14 @@ from app.security import (
     require_conversation_owner,
     CurrentUser
 )
-from app.api.deps import get_branch_context_service, get_conversation_service, get_message_repository, get_plan_limit_service
+from app.api.deps import (
+    get_branch_context_service, get_conversation_service, get_message_repository, get_plan_limit_service,
+    get_temporary_service,
+)
 from app.services.branch_context_service import BranchContextService
-from app.services.conversation_service import ConversationService
+from app.services.conversation_service import ConversationService, TemporaryConversationError
+from app.services.temporary_service import TemporaryService
+from app.telemetry import metrics
 from app.models.conversation import Conversation
 from app.schemas.conversation import (
     CreateConversationRequest,
@@ -35,13 +40,17 @@ async def create_conversation(
     service: ConversationService = Depends(get_conversation_service),
     message_repo=Depends(get_message_repository),
     plan_limits=Depends(get_plan_limit_service),
+    temporary_service: TemporaryService = Depends(get_temporary_service),
 ):
     """
     Creates a new conversation catalog for the authenticated user. A branch (parent_conversation_id)
     freezes its branch point: `branch_message_id`, or the parent's latest message when omitted.
+    `temporary: true` makes a chat that is not listed or remembered and is deleted after 24 hours (no parent allowed).
     """
     if payload.branch_message_id and not payload.parent_conversation_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="branch_message_id requires parent_conversation_id.")
+    if payload.temporary and payload.parent_conversation_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A temporary chat cannot be a branch.")
     try:
         conv = await service.create(
             user_id=current_user.id,
@@ -50,8 +59,19 @@ async def create_conversation(
             branch_message_id=payload.branch_message_id,
             message_repo=message_repo,
             plan_limits=plan_limits,
+            temporary=payload.temporary,
         )
+        if conv.temporary:
+            try:
+                await temporary_service.register(conv)
+            except Exception:
+                await service.delete(conv.conversation_id)      # never leave a temporary chat the sweep cannot find
+                raise
+            metrics.temporary_conversations_total.inc()
         return conv
+    except TemporaryConversationError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail={"code": "temporary_conversation", "message": str(e)})
     except LookupError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PermissionError as e:

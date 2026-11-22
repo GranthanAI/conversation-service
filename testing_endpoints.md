@@ -272,3 +272,65 @@ curl -X GET "http://localhost:8000/v1/conversations/0194ad56-3c22-79e0-8111-89e4
   -H "Authorization: Bearer $OTHER_TOKEN"
 ```
 **Response:** `403 Forbidden` (`{"detail": "Forbidden: You do not own this conversation"}`)
+
+---
+
+## 6. Quick wins (edit, thumbs, share, temporary chat, follow-ups, think longer)
+
+All routes are under `/v1` (the gateway adds the `/api` prefix). `$TOKEN` and `$CID` are as in section 1.
+
+### Edit a sent message (a new sibling branch)
+```bash
+curl -X POST "http://localhost:8000/v1/conversations/$CID/messages/$MID/edit" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Idempotency-Key: $(uuidgen)" -H "Content-Type: application/json" \
+  -d '{"content": "Explain it for a class 10 student", "think": false}'
+```
+**Response:** `202 {"conversation": {..., "parent_conversation_id", "branch_message_id", "edited_from_message_id"}, "message": {..., "response_message_id"}}`.
+The branch goes to the message before `$MID` in `$CID` (case 1); for the first message of a branch it becomes a sibling of
+that branch (case 2); for the first message of a root it is a new root (case 3). `file_ids` omitted keeps the original files.
+`409` codes: `not_user_message`, `message_not_sent`, `temporary_conversation`, `conversation_busy`. A retry with the same key returns the
+same conversation and message.
+```bash
+curl "http://localhost:8000/v1/conversations/$CID/messages/$MID/edits" -H "Authorization: Bearer $TOKEN"
+# [{"conversation_id", "title", "created_at"}]  deleted versions are not listed
+```
+
+### Thumbs up / down
+```bash
+curl -X PUT "http://localhost:8000/v1/conversations/$CID/messages/$ANSWER_ID/feedback" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"rating": "down", "reason": "too_long", "comment": "Too much text"}'
+curl -X DELETE "http://localhost:8000/v1/conversations/$CID/messages/$ANSWER_ID/feedback" -H "Authorization: Bearer $TOKEN"   # 204
+```
+`reason`: inaccurate, not_helpful, wrong_level, too_long, too_short, formatting, unsafe, other (thumbs down only). `409 not_assistant_message`
+unless the message is a finished answer. History rows carry your own `feedback: {rating, reason}` or `null`.
+Staff (roles `support` or `admin`):
+```bash
+curl "http://localhost:8000/v1/feedback/admin?rating=down&model_group=smart&reason=too_long&from=2026-11-01&to=2026-11-22&limit=50" \
+  -H "Authorization: Bearer $STAFF_TOKEN"        # 403 for anyone else; no user id or email in the items
+```
+
+### Share link
+```bash
+curl -X POST "http://localhost:8000/v1/shares" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"conversation_id\": \"$CID\", \"scope\": \"hierarchy\"}"       # 201 {share_id, url_token (shown once), ...}
+curl "http://localhost:8000/v1/shares" -H "Authorization: Bearer $TOKEN"                          # active links, no tokens
+curl "http://localhost:8000/v1/shares/public/$URL_TOKEN"                                           # PUBLIC, no Authorization header
+curl -X POST "http://localhost:8000/v1/shares/$SHARE_ID/refresh" -H "Authorization: Bearer $TOKEN"
+curl -X DELETE "http://localhost:8000/v1/shares/$SHARE_ID" -H "Authorization: Bearer $TOKEN"       # 204; the link then answers 404 share_not_found
+```
+Errors: `409 temporary_conversation`, `409 share_limit` (50 active links), `413 share_too_large`; the public read answers
+`429` with `Retry-After` past 60 requests a minute per IP, and `404 share_not_found` for unknown and revoked tokens alike.
+
+### Temporary chat
+```bash
+curl -X POST "http://localhost:8000/v1/conversations" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"title": "scratch", "temporary": true}'      # response has temporary: true and expires_at (+24 h); not in GET /v1/conversations
+```
+A temporary chat cannot have a parent (`400`), cannot be branched from, edited or shared (`409 temporary_conversation`).
+The expiry worker deletes it after `expires_at` through the normal delete path.
+
+### Follow-ups and think longer
+`PATCH /v1/preferences {"suggest_followups": false}` turns the suggestions off. After an answer, `GET .../messages` returns
+`suggestions: [...]` on the assistant row once llm-service has published them. Send, edit and regenerate accept `"think": true`; the limit
+`think_longer_per_day` (plan) is checked first (`403 plan_limit`, `limit: think_longer_per_day`). Assistant rows carry `think: true`
+when the answer used reasoning; the final SSE event carries `notice_key: "think.not_applied"` when it was asked for but not applied.

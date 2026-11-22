@@ -18,6 +18,7 @@ FREE_LIMITS: dict[str, int] = {
     "storage_mb": 100,
     "custom_modes": 3,
     "mode_instruction_chars": 1000,
+    "think_longer_per_day": 0,
 }
 
 # Individual plans in upgrade order (free < pro < max). Anything else (org / payg plans) has no upgrade target here.

@@ -28,6 +28,10 @@ from app.clients.billing_client import billing_client
 from app.services.conversation_service import ConversationService
 from app.services.message_service import MessageService
 from app.services.idempotency_service import IdempotencyService
+from app.services.edit_service import EditService
+from app.services.feedback_service import FeedbackService
+from app.services.share_service import ShareService
+from app.services.temporary_service import TemporaryService
 from app.services.stream_service import StreamService
 from app.clients.kafka_producer import KafkaProducerClient, kafka_producer_client
 from app.db.redis import redis_manager
@@ -153,6 +157,39 @@ def get_message_service(
         preferences_service=preferences_service, branch_context=branch_context,
         billing_gate=billing_gate, plan_limits=plan_limits,
     )
+
+def get_edit_service(
+    session: AsyncSession = Depends(get_db),
+    conversations: ConversationService = Depends(get_conversation_service),
+    message_repo: CassandraMessageRepository = Depends(get_message_repository),
+    message_service: MessageService = Depends(get_message_service),
+    plan_limits: PlanLimitService = Depends(get_plan_limit_service),
+) -> EditService:
+    return EditService(session, conversations, message_repo, message_service, plan_limits=plan_limits)
+
+
+def get_feedback_service(
+    session: AsyncSession = Depends(get_db),
+    message_repo: CassandraMessageRepository = Depends(get_message_repository),
+) -> FeedbackService:
+    return FeedbackService(session, message_repo)
+
+
+def get_temporary_service(session: AsyncSession = Depends(get_db)) -> TemporaryService:
+    return TemporaryService(session)
+
+
+def get_share_service(
+    session: AsyncSession = Depends(get_db),
+    conversations: ConversationService = Depends(get_conversation_service),
+    message_repo: CassandraMessageRepository = Depends(get_message_repository),
+    branch_context: BranchContextService = Depends(get_branch_context_service),
+) -> ShareService:
+    from app.artifacts.runtime import get_object_store
+    from app.db.session import get_session_factory
+    return ShareService(session, conversations, message_repo, get_object_store(), branch_context=branch_context,
+                        redis=redis_manager.client, session_factory=get_session_factory())
+
 
 def get_idempotency_service() -> IdempotencyService:
     """

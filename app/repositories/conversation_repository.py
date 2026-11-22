@@ -39,17 +39,44 @@ class CassandraConversationRepository:
         outbox_payload: str,
         parent_conversation_id: Optional[UUID] = None,
         branch_message_id: Optional[UUID] = None,
+        temporary: bool = False,
+        expires_at: Optional[datetime] = None,
+        edited_from_message_id: Optional[UUID] = None,
     ) -> Conversation:
         """
         Atomic transactional write saving conversation data and outbox task inside a single LOGGED BATCH.
+        A temporary conversation is written to `conversations` only, never to `conversations_by_user`, so it is
+        not listed, searched or exported with "all conversations".
         """
         now = datetime.now(timezone.utc)
         bucket = conversation_id.int % 32
-        
+
+        if temporary:
+            cql = """
+                BEGIN BATCH
+                    INSERT INTO conversations (conversation_id, user_id, title, created_at, updated_at, status, parent_conversation_id, branch_message_id, temporary, expires_at, edited_from_message_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    INSERT INTO transactional_outbox (bucket, event_id, event_type, payload, published, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?);
+                APPLY BATCH;
+            """
+            stmt = self._get_prepared("create_conv_outbox_temporary", cql)
+            self.manager.session.execute(stmt, (
+                conversation_id, user_id, title, now, now, status, parent_conversation_id, branch_message_id,
+                True, expires_at, edited_from_message_id,
+                bucket, event_id, event_type, outbox_payload, False, now
+            ))
+            return Conversation(
+                conversation_id=conversation_id, user_id=user_id, title=title, created_at=now, updated_at=now,
+                status=ConversationStatus(status), parent_conversation_id=parent_conversation_id,
+                branch_message_id=branch_message_id, temporary=True, expires_at=expires_at,
+                edited_from_message_id=edited_from_message_id,
+            )
+
         cql = """
             BEGIN BATCH
-                INSERT INTO conversations (conversation_id, user_id, title, created_at, updated_at, status, parent_conversation_id, branch_message_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                INSERT INTO conversations (conversation_id, user_id, title, created_at, updated_at, status, parent_conversation_id, branch_message_id, temporary, expires_at, edited_from_message_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 INSERT INTO conversations_by_user (user_id, updated_at, conversation_id, title, created_at, status, parent_conversation_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?);
                 INSERT INTO transactional_outbox (bucket, event_id, event_type, payload, published, created_at)
@@ -57,13 +84,14 @@ class CassandraConversationRepository:
             APPLY BATCH;
         """
         stmt = self._get_prepared("create_conv_outbox", cql)
-        
+
         self.manager.session.execute(stmt, (
             conversation_id, user_id, title, now, now, status, parent_conversation_id, branch_message_id,
+            False, None, edited_from_message_id,
             user_id, now, conversation_id, title, now, status, parent_conversation_id,
             bucket, event_id, event_type, outbox_payload, False, now
         ))
-        
+
         return Conversation(
             conversation_id=conversation_id,
             user_id=user_id,
@@ -73,6 +101,7 @@ class CassandraConversationRepository:
             status=ConversationStatus(status),
             parent_conversation_id=parent_conversation_id,
             branch_message_id=branch_message_id,
+            edited_from_message_id=edited_from_message_id,
         )
 
     def get(self, conversation_id: UUID) -> Optional[Conversation]:
@@ -80,16 +109,17 @@ class CassandraConversationRepository:
         Fetches conversation metadata by UUID.
         """
         cql = """
-            SELECT conversation_id, user_id, title, created_at, updated_at, status, parent_conversation_id, branch_message_id
+            SELECT conversation_id, user_id, title, created_at, updated_at, status, parent_conversation_id, branch_message_id,
+                   temporary, expires_at, edited_from_message_id
             FROM conversations
             WHERE conversation_id = ?
         """
         stmt = self._get_prepared("get_conv", cql)
         row = self.manager.session.execute(stmt, (conversation_id,)).one()
-        
+
         if not row:
             return None
-            
+
         return Conversation(
             conversation_id=row.conversation_id,
             user_id=row.user_id,
@@ -99,6 +129,9 @@ class CassandraConversationRepository:
             status=ConversationStatus(row.status),
             parent_conversation_id=getattr(row, 'parent_conversation_id', None),
             branch_message_id=getattr(row, 'branch_message_id', None),
+            temporary=bool(getattr(row, 'temporary', None)),
+            expires_at=getattr(row, 'expires_at', None),
+            edited_from_message_id=getattr(row, 'edited_from_message_id', None),
         )
 
     def update_with_outbox(
@@ -120,24 +153,48 @@ class CassandraConversationRepository:
         new_updated_at = datetime.now(timezone.utc)
         bucket = conversation_id.int % 32
 
+        def _kept() -> Conversation:
+            return Conversation(
+                conversation_id=conversation_id, user_id=conv.user_id, title=title, created_at=conv.created_at,
+                updated_at=new_updated_at, status=ConversationStatus(status),
+                parent_conversation_id=conv.parent_conversation_id, branch_message_id=conv.branch_message_id,
+                temporary=conv.temporary, expires_at=conv.expires_at,
+                edited_from_message_id=conv.edited_from_message_id)
+
+        if conv.temporary:      # never in conversations_by_user: only the catalog row and the outbox event
+            cql = """
+                BEGIN BATCH
+                    UPDATE conversations
+                    SET title = ?, updated_at = ?, status = ?
+                    WHERE conversation_id = ?;
+                    INSERT INTO transactional_outbox (bucket, event_id, event_type, payload, published, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?);
+                APPLY BATCH;
+            """
+            self.manager.session.execute(self._get_prepared("update_conv_outbox_temporary", cql), (
+                title, new_updated_at, status, conversation_id,
+                bucket, event_id, event_type, outbox_payload, False, new_updated_at
+            ))
+            return _kept()
+
         cql = """
             BEGIN BATCH
                 DELETE FROM conversations_by_user
                 WHERE user_id = ? AND updated_at = ? AND conversation_id = ?;
-                
+
                 INSERT INTO conversations_by_user (user_id, updated_at, conversation_id, title, created_at, status, parent_conversation_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?);
-                
+
                 UPDATE conversations
                 SET title = ?, updated_at = ?, status = ?
                 WHERE conversation_id = ?;
-                
+
                 INSERT INTO transactional_outbox (bucket, event_id, event_type, payload, published, created_at)
                 VALUES (?, ?, ?, ?, ?, ?);
             APPLY BATCH;
         """
         stmt = self._get_prepared("update_conv_outbox", cql)
-        
+
         self.manager.session.execute(stmt, (
             conv.user_id, conv.updated_at, conversation_id,
             conv.user_id, new_updated_at, conversation_id, title, conv.created_at, status, conv.parent_conversation_id,
@@ -145,15 +202,7 @@ class CassandraConversationRepository:
             bucket, event_id, event_type, outbox_payload, False, new_updated_at
         ))
 
-        return Conversation(
-            conversation_id=conversation_id,
-            user_id=conv.user_id,
-            title=title,
-            created_at=conv.created_at,
-            updated_at=new_updated_at,
-            status=ConversationStatus(status),
-            parent_conversation_id=conv.parent_conversation_id
-        )
+        return _kept()
 
     def delete_with_outbox(
         self,
@@ -168,7 +217,7 @@ class CassandraConversationRepository:
         conv = self.get(conversation_id)
         if not conv:
             return False
-        
+
         # Soft delete is an update statement setting status to deleted
         result = self.update_with_outbox(
             conversation_id=conversation_id,
@@ -227,14 +276,20 @@ class CassandraConversationRepository:
             return False
 
         new_updated_at = datetime.now(timezone.utc)
+        if conv.temporary:
+            self.manager.session.execute(
+                self._get_prepared("update_conv_title_temporary",
+                                   "UPDATE conversations SET title = ?, updated_at = ? WHERE conversation_id = ?"),
+                (title, new_updated_at, conversation_id))
+            return True
         cql = """
             BEGIN BATCH
                 DELETE FROM conversations_by_user
                 WHERE user_id = ? AND updated_at = ? AND conversation_id = ?;
-                
+
                 INSERT INTO conversations_by_user (user_id, updated_at, conversation_id, title, created_at, status, parent_conversation_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?);
-                
+
                 UPDATE conversations
                 SET title = ?, updated_at = ?
                 WHERE conversation_id = ?;
@@ -255,12 +310,17 @@ class CassandraConversationRepository:
         conv = self.get(conversation_id)
         if not conv:
             return False
-            
+        if conv.temporary:
+            self.manager.session.execute(
+                self._get_prepared("hard_delete_conv_temporary", "DELETE FROM conversations WHERE conversation_id = ?"),
+                (conversation_id,))
+            return True
+
         cql = """
             BEGIN BATCH
                 DELETE FROM conversations_by_user
                 WHERE user_id = ? AND updated_at = ? AND conversation_id = ?;
-                
+
                 DELETE FROM conversations
                 WHERE conversation_id = ?;
             APPLY BATCH;

@@ -10,6 +10,7 @@ from uuid import UUID
 from app.db.cassandra import cassandra_manager
 from app.models.message import Message, MessageStatus
 from app.services.citations import dumps_citations, loads_citations, sanitize_citations
+from app.services.suggestions import dumps_suggestions, loads_suggestions
 
 class CassandraMessageRepository:
     """
@@ -84,7 +85,7 @@ class CassandraMessageRepository:
         """
         if cursor:
             cql = """
-                SELECT message_id, sender, content, created_at, status, file_ids, citations, model, model_group
+                SELECT message_id, sender, content, created_at, status, file_ids, citations, model, model_group, suggestions, think
                 FROM messages_by_conversation
                 WHERE conversation_id = ? AND message_id < ?
                 LIMIT ?
@@ -93,7 +94,7 @@ class CassandraMessageRepository:
             rows = self.manager.session.execute(stmt, (conversation_id, cursor, limit))
         else:
             cql = """
-                SELECT message_id, sender, content, created_at, status, file_ids, citations, model, model_group
+                SELECT message_id, sender, content, created_at, status, file_ids, citations, model, model_group, suggestions, think
                 FROM messages_by_conversation
                 WHERE conversation_id = ?
                 LIMIT ?
@@ -115,13 +116,14 @@ class CassandraMessageRepository:
                 file_ids=list(row.file_ids) if row.file_ids else [],
                 citations=loads_citations(row.citations),
                 model=getattr(row, 'model', None), model_group=getattr(row, 'model_group', None),
+                suggestions=loads_suggestions(getattr(row, 'suggestions', None)), think=bool(getattr(row, 'think', None)),
             ))
         return messages
 
     def history_upto(self, conversation_id: UUID, upto_message_id: UUID, limit: int = 50) -> List[Message]:
         """Newest-first messages up to and INCLUDING `upto_message_id` (a branch point)."""
         cql = """
-            SELECT message_id, sender, content, created_at, status, file_ids, citations, model, model_group
+            SELECT message_id, sender, content, created_at, status, file_ids, citations, model, model_group, suggestions, think
             FROM messages_by_conversation
             WHERE conversation_id = ? AND message_id <= ?
             LIMIT ?
@@ -140,13 +142,14 @@ class CassandraMessageRepository:
                 file_ids=list(row.file_ids) if row.file_ids else [],
                 citations=loads_citations(row.citations),
                 model=getattr(row, 'model', None), model_group=getattr(row, 'model_group', None),
+                suggestions=loads_suggestions(getattr(row, 'suggestions', None)), think=bool(getattr(row, 'think', None)),
             ))
         return out
 
     def get_message(self, conversation_id: UUID, message_id: UUID) -> Optional[Message]:
         """Fetches a single message row, or None."""
         cql = """
-            SELECT sender, content, created_at, status, file_ids, citations, model, model_group
+            SELECT sender, content, created_at, status, file_ids, citations, model, model_group, suggestions, think
             FROM messages_by_conversation
             WHERE conversation_id = ? AND message_id = ?
         """
@@ -168,6 +171,7 @@ class CassandraMessageRepository:
             file_ids=list(row.file_ids) if row.file_ids else [],
             citations=loads_citations(row.citations),
                 model=getattr(row, 'model', None), model_group=getattr(row, 'model_group', None),
+                suggestions=loads_suggestions(getattr(row, 'suggestions', None)), think=bool(getattr(row, 'think', None)),
         )
 
     def count_user_messages(self, conversation_id: UUID) -> int:
@@ -201,6 +205,7 @@ class CassandraMessageRepository:
         citations: Optional[List[dict]] = None,
         model: Optional[str] = None,
         model_group: Optional[str] = None,
+        think: bool = False,
     ) -> Message:
         """
         Inserts/updates a message directly in Cassandra without staging outbox event.
@@ -227,6 +232,10 @@ class CassandraMessageRepository:
             columns.append("model_group")
             params.append(model_group)
             name += "_group"
+        if think:
+            columns.append("think")
+            params.append(True)
+            name += "_think"
         cql = (f"INSERT INTO messages_by_conversation ({', '.join(columns)}) "
                f"VALUES ({', '.join('?' for _ in columns)})")
         self.manager.session.execute(self._get_prepared(name, cql), tuple(params))
@@ -240,7 +249,20 @@ class CassandraMessageRepository:
             citations=clean,
             model=model or None,
             model_group=model_group or None,
+            think=bool(think),
         )
+
+    def set_suggestions(self, conversation_id: UUID, message_id: UUID, suggestions: List[str]) -> bool:
+        """Stores the follow-up questions on an EXISTING sent assistant row; False (nothing written) otherwise."""
+        existing = self.get_message(conversation_id, message_id)
+        if (existing is None or existing.sender != "assistant" or existing.status != MessageStatus.SENT
+                or not suggestions):
+            return False
+        stmt = self._get_prepared(
+            "set_suggestions",
+            "UPDATE messages_by_conversation SET suggestions = ? WHERE conversation_id = ? AND message_id = ?")
+        self.manager.session.execute(stmt, (dumps_suggestions(suggestions), conversation_id, message_id))
+        return True
 
     def set_answering_model(self, conversation_id: UUID, message_id: UUID, model: Optional[str],
                             model_group: Optional[str]) -> bool:

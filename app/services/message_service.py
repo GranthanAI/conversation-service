@@ -20,6 +20,7 @@ from app.middleware.correlation import get_correlation_id
 from app.utils.helpers import uuidv7, uuidv7_after
 from app.services.preferences_service import PreferencesService, ResolvedMessagePreferences
 from app.services.model_selection import choose_model
+from app.services.suggestions import sanitize_suggestions
 
 
 class PendingResponseRegistrationError(Exception):
@@ -95,6 +96,8 @@ class MessageService:
         custom_mode: Optional[dict] = None,
         include_diagrams: bool = False,
         billing: Optional[dict] = None,
+        think: bool = False,
+        temporary: bool = False,
     ) -> dict:
         """
         Builds the flat chat.message.created payload matching llm-service's
@@ -122,12 +125,17 @@ class MessageService:
         Billing (schema_version 2.4, additive): `billing` is the grant block of the integration plan 4.4.1 and is
         OMITTED when BILLING_ENFORCEMENT=off, so an unbilled payload differs from 2.3 only in schema_version.
         `defaults_applied.model` is added (true) only when a saved default model was refused and Auto was used.
+
+        Quick wins (schema_version 2.5, additive; older consumers ignore them):
+          think        true only when the user asked to think longer AND the plan allowed it.
+          temporary    true for a temporary chat: llm-service skips memory, graph-service skips the event.
+          preferences.suggest_followups   the user's preference (default true), set by generation_preferences().
         """
         now = datetime.now(timezone.utc).isoformat()
         correlation_id = get_correlation_id()
         payload = {
             "event_type": "chat.message.created",
-            "schema_version": "2.4",
+            "schema_version": "2.5",
             "message_id": str(message_id),
             "response_message_id": str(response_message_id) if response_message_id else None,
             "conversation_id": str(conversation_id),
@@ -137,6 +145,8 @@ class MessageService:
             "selected_tools": selected_tools or [],
             # Per-message opt-in (additive, schema 2.3): offer diagram blocks in any mode and nudge the model to use one if it helps.
             "include_diagrams": bool(include_diagrams),
+            "think": bool(think),
+            "temporary": bool(temporary),
             "file_ids": [str(fid) for fid in file_ids] if file_ids else [],
             # Recent turns before this request (oldest first), so llm-service has the conversation even when
             # the memory service is slow or down. Optional and additive: older consumers ignore it.
@@ -170,6 +180,8 @@ class MessageService:
         file_ids: Optional[List[UUID]] = None,
         include_diagrams: bool = False,
         model: Optional[str] = None,
+        think: bool = False,
+        temporary: bool = False,
     ) -> Message:
         """
         Persists a message atomically (message + outbox event in one LOGGED BATCH) and
@@ -194,14 +206,24 @@ class MessageService:
         event_id = uuid.uuid1()
         resolved = await self._resolve_preferences(user_id, mode, selected_tools)                   # 1
         grant, defaults_applied = None, resolved.defaults_applied
+        think_taken = False
         if sender == "user":
             if self.plan_limits is not None:
                 await self.plan_limits.check_send(user_id, conversation_id, file_ids)               # 2
+                if think:                                   # the daily "think longer" allowance, before billing reserves
+                    think = await self.plan_limits.take_think(user_id)
+                    think_taken = think
             if self.billing_gate is not None:
-                grant, fell_back = await self.billing_gate.reserve(                                  # 3
-                    user_id, message_id, choose_model(model, resolved.default_model))
+                try:
+                    grant, fell_back = await self.billing_gate.reserve(                              # 3
+                        user_id, message_id, choose_model(model, resolved.default_model))
+                except BaseException:
+                    await self._give_back_think(user_id, think_taken)
+                    raise
                 if fell_back:
                     defaults_applied = {**defaults_applied, "model": True}
+        elif think:
+            think = False                                   # only a user message can ask to think
 
         try:
             # Read BEFORE this turn's rows exist, so the history is strictly what came earlier.
@@ -219,13 +241,15 @@ class MessageService:
                 custom_mode=resolved.custom_mode.model_dump(mode="json") if resolved.custom_mode else None,
                 include_diagrams=include_diagrams,
                 billing=grant.event_block() if grant else None,
+                think=think,
+                temporary=temporary,
             )
 
             if sender == "user" and self.plan_limits is not None:
                 await self.plan_limits.record_send(user_id, conversation_id, file_ids)              # 4 (counters)
 
             if response_message_id:
-                await self._open_pending_response(conversation_id, response_message_id)
+                await self._open_pending_response(conversation_id, response_message_id, think=think)
 
             try:
                 msg = self.repo.create_with_outbox(
@@ -244,22 +268,28 @@ class MessageService:
                     await self._discard_pending_response(conversation_id, response_message_id)
                 raise
         except BaseException:
-            await self._compensate(user_id, grant)                                                   # 5
+            await self._compensate(user_id, grant, think_taken)                                      # 5
             raise
 
         # Invalidate history cache
         await self._invalidate_cache(conversation_id)
+        msg.think = bool(think)             # what the request asked for and was allowed; the answer's own flag comes later
         msg.response_message_id = response_message_id
         msg.billing = grant.response_block() if grant else None
         msg.defaults_applied = defaults_applied
         return msg
 
-    async def _compensate(self, user_id: Optional[UUID], grant) -> None:
-        """A failure after a successful reserve gives the reservation back (Release reason "send_failed"). Never
-        raises. Only used BEFORE the outbox row is durably written: once it is, the request will be answered and
-        billing settles it from the response event."""
+    async def _compensate(self, user_id: Optional[UUID], grant, think_taken: bool = False) -> None:
+        """A failure after a successful reserve gives the reservation back (Release reason "send_failed"), and the
+        think-longer count taken for the request. Never raises. Only used BEFORE the outbox row is durably written:
+        once it is, the request will be answered and billing settles it from the response event."""
         if grant is not None and self.billing_gate is not None:
             await self.billing_gate.release(user_id, grant, "send_failed")
+        await self._give_back_think(user_id, think_taken)
+
+    async def _give_back_think(self, user_id: Optional[UUID], think_taken: bool) -> None:
+        if think_taken and self.plan_limits is not None:
+            await self.plan_limits.give_back_think(user_id)
 
     async def _recent_history(self, conversation_id: UUID) -> List[dict]:
         """Recent completed turns for the request event (best effort: a history read failure must never
@@ -317,7 +347,8 @@ class MessageService:
         picked.reverse()
         return picked
 
-    async def _open_pending_response(self, conversation_id: UUID, response_message_id: UUID) -> None:
+    async def _open_pending_response(self, conversation_id: UUID, response_message_id: UUID,
+                                     think: bool = False) -> None:
         """Creates the pending assistant row and registers its timeout marker (in that
         order). If the marker cannot be registered the row is removed again."""
         self.repo.create_message_direct(
@@ -328,7 +359,7 @@ class MessageService:
             status="pending",
         )
         try:
-            await self._register_pending_response(conversation_id, response_message_id)
+            await self._register_pending_response(conversation_id, response_message_id, think=think)
         except PendingResponseRegistrationError:
             self._soft_delete_placeholder(conversation_id, response_message_id)
             raise
@@ -345,7 +376,7 @@ class MessageService:
             logger.error("Failed to remove pending assistant placeholder",
                          message_id=str(response_message_id), error=str(e))
 
-    async def _register_pending_response(self, conversation_id: UUID, message_id: UUID) -> None:
+    async def _register_pending_response(self, conversation_id: UUID, message_id: UUID, think: bool = False) -> None:
         """
         Records a pending-response marker in Redis so the PendingTimeoutWorker can
         fail a message that never receives a chat.response.generated event.
@@ -356,22 +387,27 @@ class MessageService:
         """
         if not self.cache or not self.cache.redis:
             raise PendingResponseRegistrationError("Redis is not available for pending-response tracking")
+        timeout = settings.PENDING_RESPONSE_TIMEOUT_THINK_SECONDS if think else settings.PENDING_RESPONSE_TIMEOUT_SECONDS
         try:
             key = f"pending_response:{message_id}"
-            await self.cache.redis.set(
-                key,
-                str(conversation_id),
-                ex=settings.PENDING_RESPONSE_TIMEOUT_SECONDS + settings.PENDING_RESPONSE_MARKER_GRACE_SECONDS,
-            )
+            await self.cache.redis.set(key, str(conversation_id), ex=timeout + settings.PENDING_RESPONSE_MARKER_GRACE_SECONDS)
+            if think:       # remembered so the final event can say "answered without thinking longer" (think.not_applied)
+                await self.cache.redis.set(f"pending_think:{message_id}", "1",
+                                           ex=timeout + settings.PENDING_RESPONSE_MARKER_GRACE_SECONDS)
             await self.cache.redis.zadd(
-                "pending_response:zset",
-                {str(message_id): datetime.now(timezone.utc).timestamp() + settings.PENDING_RESPONSE_TIMEOUT_SECONDS},
-            )
+                "pending_response:zset", {str(message_id): datetime.now(timezone.utc).timestamp() + timeout})
         except Exception as e:
             logger.warning("Failed to register pending-response timeout marker", message_id=str(message_id), error=str(e))
             # Do not leave a half-registered marker behind.
             await self.clear_pending_response(message_id)
             raise PendingResponseRegistrationError(str(e)) from e
+
+    async def requested_think(self, message_id: UUID) -> bool:
+        """True when the request that this assistant row answers asked (and was allowed) to think longer."""
+        try:
+            return bool(await self.cache.redis.get(f"pending_think:{message_id}"))
+        except Exception:
+            return False
 
     async def clear_pending_response(self, message_id: UUID) -> None:
         """Removes the pending-response marker once a terminal response (success
@@ -379,6 +415,7 @@ class MessageService:
         that was already answered."""
         try:
             await self.cache.redis.delete(f"pending_response:{message_id}")
+            await self.cache.redis.delete(f"pending_think:{message_id}")
             await self.cache.redis.zrem("pending_response:zset", str(message_id))
         except Exception as e:
             logger.warning("Failed to clear pending-response marker", message_id=str(message_id), error=str(e))
@@ -411,7 +448,7 @@ class MessageService:
         return False
 
     async def regenerate(self, conversation_id: UUID, message_id: UUID, user_id: Optional[UUID] = None,
-                         model: Optional[str] = None) -> Optional[Message]:
+                         model: Optional[str] = None, think: bool = False, temporary: bool = False) -> Optional[Message]:
         """
         Regenerates an assistant message.
 
@@ -455,9 +492,17 @@ class MessageService:
         # A regenerate is a new message for billing: it reserves under its NEW request id. It adds no user message and
         # reuses the prompt's documents, so the per-conversation / per-tree limits have nothing to check.
         grant, defaults_applied = None, resolved.defaults_applied
+        think_taken = False
+        if think and self.plan_limits is not None:
+            think = await self.plan_limits.take_think(owner_id)         # before billing reserves anything
+            think_taken = think
         if self.billing_gate is not None:
-            grant, fell_back = await self.billing_gate.reserve(
-                owner_id, request_id, choose_model(model, resolved.default_model))
+            try:
+                grant, fell_back = await self.billing_gate.reserve(
+                    owner_id, request_id, choose_model(model, resolved.default_model))
+            except BaseException:
+                await self._give_back_think(owner_id, think_taken)
+                raise
             if fell_back:
                 defaults_applied = {**defaults_applied, "model": True}
 
@@ -477,9 +522,11 @@ class MessageService:
                     "replaces_message_id": str(message_id),
                 },
                 billing=grant.event_block() if grant else None,
+                think=think,
+                temporary=temporary,
             )
 
-            await self._open_pending_response(conversation_id, response_message_id)
+            await self._open_pending_response(conversation_id, response_message_id, think=think)
             try:
                 self.repo.create_with_outbox(
                     conversation_id=conversation_id,
@@ -495,7 +542,7 @@ class MessageService:
                 await self._discard_pending_response(conversation_id, response_message_id)
                 raise
         except BaseException:
-            await self._compensate(owner_id, grant)
+            await self._compensate(owner_id, grant, think_taken)
             raise
 
         if target_msg.sender == "assistant":
@@ -534,6 +581,7 @@ class MessageService:
         citations: Optional[List[dict]] = None,
         model: Optional[str] = None,
         model_group: Optional[str] = None,
+        think: bool = False,
     ) -> Optional[Message]:
         """
         Saves the completed assistant message (with its source citations and the answering model, if any) and evicts
@@ -552,9 +600,22 @@ class MessageService:
             **({"citations": citations} if citations else {}),
             **({"model": model} if model else {}),
             **({"model_group": model_group} if model_group else {}),
+            **({"think": True} if think else {}),
         )
         await self._invalidate_cache(conversation_id)
         return msg
+
+    async def store_suggestions(self, conversation_id: UUID, message_id: UUID, raw) -> bool:
+        """Validates (1..3 strings, each <= 120 chars after strip, no newlines) and stores the follow-ups on a sent
+        assistant row of THIS conversation, then drops the history cache. False = nothing stored (no such row, wrong
+        conversation, not sent, or nothing valid)."""
+        suggestions = sanitize_suggestions(raw)
+        if not suggestions:
+            return False
+        stored = self.repo.set_suggestions(conversation_id, message_id, suggestions)
+        if stored:
+            await self._invalidate_cache(conversation_id)
+        return stored
 
     def is_completed_reply(self, conversation_id: UUID, message_id: UUID) -> bool:
         """True if this assistant row already holds a real, finished answer (status sent, non-empty content)."""

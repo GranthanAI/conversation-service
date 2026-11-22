@@ -53,6 +53,7 @@ PLAN_LIMIT_COPY: dict[str, tuple[str, str]] = {
     "documents_per_tree": ("This tree has all the documents it includes.", "Remove one"),
     "custom_modes": ("You have all the custom modes your plan includes.", "Remove one"),
     "mode_instruction_chars": ("That instruction is longer than your plan includes.", "Shorten it"),
+    "think_longer_per_day": ("You've used today's Think longer answers. They reset at midnight.", ""),
 }
 
 CONVERSATION_FULL_MESSAGE = (

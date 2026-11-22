@@ -105,3 +105,8 @@ billing_breaker_open = Gauge("billing_breaker_open", "1 while the billing circui
 billing_degraded_messages_total = Counter("billing_degraded_messages_total", "Messages allowed in degraded mode")
 billing_release_total = Counter("billing_release_total", "Release calls", ("reason",))
 plan_limit_denied_total = Counter("plan_limit_denied_total", "Service-owned plan limit refusals", ("limit",))
+
+message_feedback_total = Counter("message_feedback_total", "Thumbs up/down given on assistant answers", ("rating", "reason"))
+share_views_total = Counter("share_views_total", "Public shared-link reads", ("outcome",))
+temporary_conversations_total = Counter("temporary_conversations_total", "Temporary chats created", ())
+message_edits_total = Counter("message_edits_total", "Messages edited into a new branch", ("case",))

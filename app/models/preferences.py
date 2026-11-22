@@ -152,6 +152,7 @@ class UserPreferences(BaseModel):
     personal_instructions: str = ""
     citations: CitationPreference = CitationPreference.SHOW
     document_context: DocumentContext = DocumentContext.CONVERSATION
+    suggest_followups: bool = True      # show 2-3 follow-up questions under the latest answer
 
     @classmethod
     def from_row(cls, row: Optional[dict]) -> "UserPreferences":
@@ -217,6 +218,7 @@ class PreferencesUpdate(BaseModel):
     personal_instructions: Optional[str] = None
     citations: Optional[CitationPreference] = None
     document_context: Optional[DocumentContext] = None
+    suggest_followups: Optional[bool] = None
 
     @field_validator("default_mode")
     @classmethod
@@ -287,4 +289,5 @@ def generation_preferences(prefs: UserPreferences) -> dict:
         "language_name": _LANGUAGE_PROMPT_NAME.get(prefs.language) or SUPPORTED_LANGUAGES.get(prefs.language, prefs.language),
         "personal_instructions": prefs.personal_instructions,
         "citations": prefs.citations.value,
+        "suggest_followups": prefs.suggest_followups,
     }

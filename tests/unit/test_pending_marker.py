@@ -36,7 +36,7 @@ async def test_clear_removes_key_and_zset_entry():
     svc, redis = _service()
     mid = uuid.uuid4()
     await svc.clear_pending_response(mid)
-    redis.delete.assert_awaited_once_with(f"pending_response:{mid}")
+    assert [c.args for c in redis.delete.await_args_list] == [(f"pending_response:{mid}",), (f"pending_think:{mid}",)]
     redis.zrem.assert_awaited_once_with("pending_response:zset", str(mid))
 
 

@@ -7,7 +7,7 @@ integrating Cache-Aside caching and direct Kafka event publishing.
 import json
 import uuid
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from app.repositories.conversation_repository import CassandraConversationRepository
@@ -18,6 +18,10 @@ from app.utils.helpers import uuidv7
 from app.services.cache_service import CacheService
 from app.clients.kafka_producer import KafkaProducerClient
 from app.core.config import settings
+
+class TemporaryConversationError(Exception):
+    """The operation is not allowed on a temporary chat (branch from it, edit, share): HTTP 409 temporary_conversation."""
+
 
 class ConversationService:
     """
@@ -49,11 +53,19 @@ class ConversationService:
 
     async def create(self, user_id: UUID, title: str, parent_conversation_id: Optional[UUID] = None,
                      branch_message_id: Optional[UUID] = None, message_repo=None,
-                     plan_limits=None) -> Conversation:
+                     plan_limits=None, temporary: bool = False,
+                     edited_from_message_id: Optional[UUID] = None) -> Conversation:
         """
         Creates a conversation atomically alongside its outbox task,
         writes through to cache, and publishes directly to Kafka.
+
+        temporary=True: a temporary chat (no parent allowed). It is written to `conversations` only (never to
+        conversations_by_user) with expires_at = now + TEMPORARY_CHAT_TTL_HOURS; conversation.created is still emitted
+        with payload.temporary = true. The caller registers it with TemporaryService for the expiry sweep.
+        edited_from_message_id: set when this conversation was created by editing a message.
         """
+        if temporary and parent_conversation_id:
+            raise ValueError("A temporary chat cannot be a branch.")
         # Validate parent lineage if specified
         if parent_conversation_id:
             parent_conv = await self.get(parent_conversation_id)
@@ -63,6 +75,8 @@ class ConversationService:
                 raise ValueError("Parent conversation is not active.")
             if parent_conv.user_id != user_id:
                 raise PermissionError("Access to parent conversation denied.")
+            if parent_conv.temporary:
+                raise TemporaryConversationError("A temporary chat cannot be branched.")
             if plan_limits is not None:
                 await plan_limits.check_new_branch(user_id, parent_conversation_id)     # 403 plan_limit
             # Branch point: an explicit message must belong to the parent; otherwise the parent's latest
@@ -80,6 +94,7 @@ class ConversationService:
         conversation_id = uuidv7()
         event_id = uuid.uuid1()
         now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=settings.TEMPORARY_CHAT_TTL_HOURS) if temporary else None
 
         envelope = build_event_envelope(
             event_type=KafkaTopics.CONVERSATION_CREATED,
@@ -91,6 +106,9 @@ class ConversationService:
                 "parent_conversation_id": str(parent_conversation_id) if parent_conversation_id else None,
                 "branch_message_id":      str(branch_message_id) if branch_message_id else None,
                 "created_at":             now.isoformat(),
+                # graph-service skips temporary conversations; edited_from_message_id is stored on the Conversation node
+                "temporary":              bool(temporary),
+                "edited_from_message_id": str(edited_from_message_id) if edited_from_message_id else None,
             },
             causation_id=str(event_id),
         )
@@ -107,6 +125,9 @@ class ConversationService:
             outbox_payload=json.dumps(envelope),
             parent_conversation_id=parent_conversation_id,
             branch_message_id=branch_message_id,
+            temporary=temporary,
+            expires_at=expires_at,
+            edited_from_message_id=edited_from_message_id,
         )
         
         # Write-through update

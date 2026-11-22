@@ -32,6 +32,7 @@ class CreateMessageRequest(BaseModel):
     model: Optional[str] = Field(
         None, description="'auto' or a catalog model id ([a-z0-9./-]{1,64}); omitted = the saved default_model. "
                           "Billing decides whether the plan includes it.")
+    think: bool = Field(False, description="Ask the model to reason before answering (daily plan limit think_longer_per_day)")
 
     @field_validator("model")
     def validate_model(cls, v: Optional[str]) -> Optional[str]:
@@ -77,10 +78,16 @@ class CreateMessageRequest(BaseModel):
 class RegenerateRequest(BaseModel):
     """Optional body of POST .../regenerate."""
     model: Optional[str] = Field(None, description="'auto' or a catalog model id; omitted = the saved default_model")
+    think: bool = Field(False, description="Ask the model to reason before answering")
 
     @field_validator("model")
     def validate_model(cls, v: Optional[str]) -> Optional[str]:
         return None if v is None else clean_model(v)
+
+
+class EditMessageRequest(CreateMessageRequest):
+    """POST .../messages/{mid}/edit: the same fields as a send. `file_ids` omitted = keep the original message's files
+    (an explicit empty list removes them)."""
 
 
 class CitationOut(BaseModel):
@@ -104,6 +111,12 @@ class BillingInfo(BaseModel):
     notice_key: Optional[str] = None           # "limit.best_switched" when downgraded
 
 
+class FeedbackOut(BaseModel):
+    """The caller's own thumbs on an assistant message."""
+    rating: str                         # "up" | "down"
+    reason: Optional[str] = None
+
+
 class MessageResponse(BaseModel):
     """
     Serialized DTO for message entity responses.
@@ -121,6 +134,11 @@ class MessageResponse(BaseModel):
     # The catalog model (and its group: fast/smart/best/ultra) that answered; null for user messages and older answers.
     model: Optional[str] = None
     model_group: Optional[str] = None
+    # Assistant rows: 2-3 follow-up questions (empty when none were generated); the caller's own thumbs; and whether the
+    # answer used provider reasoning ("think longer"). On a user row from send/edit, `think` is what was granted.
+    suggestions: List[str] = Field(default_factory=list)
+    feedback: Optional[FeedbackOut] = None
+    think: bool = False
     # Present on POST .../messages and .../regenerate: the assistant message that the
     # reply streams under (SSE `message_id`). Distinct from `message_id`.
     response_message_id: Optional[UUID] = None
